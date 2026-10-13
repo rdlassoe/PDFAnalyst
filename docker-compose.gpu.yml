@@ -1,0 +1,10 @@
+# Override opcional: reserva la GPU NVIDIA para Ollama (requiere NVIDIA Container Toolkit / Docker Desktop con WSL2).
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

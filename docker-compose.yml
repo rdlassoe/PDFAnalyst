@@ -1,0 +1,151 @@
+name: pdfanalyst
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  STORAGE_DIR: /data/storage
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-sentence-transformers}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
+  EMBEDDING_QUERY_PREFIX: "${EMBEDDING_QUERY_PREFIX:-query: }"
+  EMBEDDING_PASSAGE_PREFIX: "${EMBEDDING_PASSAGE_PREFIX:-passage: }"
+  LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+  LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  # Proveedor 'openai-compatible' (Groq, Gemini, OpenAI, LM Studio, llama.cpp, vLLM...). Ver README §Proveedor de generación.
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_ALLOW_EXTERNAL: ${LLM_ALLOW_EXTERNAL:-false}
+  # Clave maestra para cifrar las claves API guardadas desde Ajustes (si se omite se usa /data/secret.key)
+  APP_SECRET_KEY: ${APP_SECRET_KEY:-}
+  OCR_ENABLED: ${OCR_ENABLED:-true}
+  OCR_LANGS: ${OCR_LANGS:-spa+eng}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  # Parámetros ajustables (los valores por defecto coinciden con backend/app/config.py). Ver docs/OPERATIONS.md §10.
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+  EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+  OCR_MIN_CHARS: ${OCR_MIN_CHARS:-30}
+  OCR_DPI: ${OCR_DPI:-200}
+  CHUNK_TARGET_CHARS: ${CHUNK_TARGET_CHARS:-1200}
+  CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-200}
+  RETRIEVAL_CANDIDATES: ${RETRIEVAL_CANDIDATES:-30}
+  RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-6}
+  RETRIEVAL_MIN_SIMILARITY: ${RETRIEVAL_MIN_SIMILARITY:-0.80}
+  RETRIEVAL_FTS_MIN_COVERAGE: ${RETRIEVAL_FTS_MIN_COVERAGE:-0.5}
+  RETRIEVAL_COMMON_TERM_RATIO: ${RETRIEVAL_COMMON_TERM_RATIO:-0.10}
+  RRF_K: ${RRF_K:-60}
+  HYBRID_ENABLED: ${HYBRID_ENABLED:-true}
+  LLM_DISABLE_THINKING: ${LLM_DISABLE_THINKING:-true}
+  LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.1}
+  LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-700}
+  LLM_TIMEOUT_S: ${LLM_TIMEOUT_S:-180}
+  CONTEXT_MAX_TOKENS: ${CONTEXT_MAX_TOKENS:-3500}
+  JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
+  HF_HOME: /data/models
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432" # solo loopback: no expuesto a la red
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # OPCIONAL (perfil 'ollama'): Ollama autocontenido. Por defecto se usa el Ollama del host (host.docker.internal).
+  #   docker compose --profile ollama up -d   y   OLLAMA_BASE_URL=http://ollama:11434
+  # GPU NVIDIA: añada -f docker-compose.gpu.yml. Para reutilizar modelos del host: OLLAMA_MODELS_SOURCE en .env.
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11435:11434" # solo loopback; 11434 queda libre por si hay un Ollama en el host
+    volumes:
+      - ${OLLAMA_MODELS_SOURCE:-ollamadata}:/root/.ollama/models${OLLAMA_MODELS_MODE:-}
+
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment: *backend-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *backend-env
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - appdata:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    volumes:
+      - appdata:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+
+  # Pruebas: docker compose --profile test run --rm test
+  test:
+    profiles: ["test"]
+    build:
+      context: ./backend
+      args:
+        WITH_DEV: "true"
+    working_dir: /app
+    command: ["python", "-m", "pytest"]
+    environment:
+      <<: *backend-env
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ./backend:/app # el código se monta: no hace falta reconstruir al editar
+      - appdata:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  appdata:
+  ollamadata:

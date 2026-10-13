@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { height: 100%; }
+body { @apply bg-paper text-ink font-sans antialiased; }
+
+/* Capa de texto de PDF.js */
+.textLayer { position: absolute; inset: 0; overflow: hidden; line-height: 1; opacity: 1; }
+.textLayer span, .textLayer br { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
+.textLayer .hl { background: rgba(15, 76, 92, 0.22); border-radius: 2px; }
+
+@layer components {
+  .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-sm text-ink hover:bg-panel disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-petrol; }
+  .btn-primary { @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-petrol bg-petrol px-3 py-1.5 text-sm text-white hover:bg-petrol-dark disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-petrol; }
+  .btn-icon { @apply inline-flex h-7 w-7 items-center justify-center rounded-md text-ink-soft hover:bg-white hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-petrol; }
+  .badge { @apply inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium; }
+}
+
+/* Esqueletos de carga */
+.skeleton { position: relative; overflow: hidden; @apply rounded-md bg-line/70; }
+.skeleton::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent); animation: shimmer 1.4s infinite; }
+
+/* Quien prefiere menos movimiento: sin animaciones decorativas */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
+}

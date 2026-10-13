@@ -1,0 +1,40 @@
+[project]
+name = "pdfanalyst-backend"
+version = "0.1.0"
+description = "PDF Analyst - API, worker y pipeline RAG sobre PostgreSQL + pgvector"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0.30",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pgvector>=0.3",
+    "pymupdf>=1.24",
+    "pypdf>=4.2",
+    "pytesseract>=0.3.10",
+    "pillow>=10.3",
+    "sentence-transformers>=3.0",
+    "numpy>=1.26",
+    "httpx>=0.27",
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "reportlab>=4.2"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "slow: usa el modelo real de embeddings (descarga ~120 MB la primera vez)",
+    "ocr: requiere Tesseract instalado",
+    "ollama: requiere Ollama en ejecución con el modelo configurado",
+]
