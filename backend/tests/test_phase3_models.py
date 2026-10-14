@@ -62,7 +62,7 @@ def _counts(session):
 def test_reindex_after_model_change_keeps_old_vectors_and_queries_stay_isolated(session, ready_doc, embedder, monkeypatch):
     n_chunks = session.scalar(select(func.count()).select_from(DocumentChunk))
     fake = Fake16()
-    monkeypatch.setattr("app.services.ingestion.get_embedder", lambda: fake)
+    monkeypatch.setattr("app.services.ingestion.get_embedder", lambda *a, **k: fake)
 
     assert requeue_all_for_active_model(session) == 1
     session.expire_all()
@@ -116,7 +116,7 @@ def test_hnsw_partial_index_create_use_and_drop(session, ready_doc, embedder):
 
 def test_purge_old_model_via_cli_and_refuse_active(session, ready_doc, embedder, monkeypatch, capsys):
     fake = Fake16()
-    monkeypatch.setattr("app.services.ingestion.get_embedder", lambda: fake)
+    monkeypatch.setattr("app.services.ingestion.get_embedder", lambda *a, **k: fake)
     requeue_all_for_active_model(session)
     _drain(session)
     monkeypatch.undo()  # el modelo activo vuelve a ser el real

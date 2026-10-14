@@ -18,7 +18,8 @@ frontend/
 │   ├── DocumentPanel.tsx   # subir/listar/eliminar documentos, colecciones
 │   ├── Chat.tsx            # conversaciones, mensajes, citas, copiar, eliminar con «Deshacer»
 │   ├── PdfViewer.tsx       # visor PDF.js con resaltado del fragmento citado
-│   └── LlmSettingsPanel.tsx# perfiles de proveedor LLM (alta, edición, prueba, activación)
+│   ├── LlmSettingsPanel.tsx# perfiles de proveedor LLM (alta, edición, prueba, activación)
+│   └── EmbeddingSettingsPanel.tsx # perfiles de embeddings, vista previa de activación, vectores indexados
 ├── lib/api.ts              # cliente tipado de la API + tipos + isLocalUrl
 ├── tailwind.config.ts      # paleta, animaciones
 └── Dockerfile              # build multi-etapa (standalone)
@@ -107,10 +108,28 @@ el foco al cerrar.
 
 ### Ajustes (`/ajustes`)
 
-Gestión de proveedores LLM: lista (con insignias *Predeterminado*, *Local/Servicio externo*, *Definido en .env*), **Probar** conexión,
-**Usar por defecto**, alta/edición con plantillas (Ollama, Groq, Gemini, OpenAI, LM Studio…), **Cargar modelos** (consulta al proveedor), clave
-API (campo de contraseña; una clave guardada nunca se muestra, solo «…1234»; vacío = conservar; casilla para eliminarla) y el aviso de
-consentimiento para servicios externos. Detalle de seguridad en README §«Proveedor de generación» y `docs/OPERATIONS.md` §7.
+Dos secciones independientes:
+
+**Modelo de lenguaje (LLM)** — lista de proveedores (insignias *Predeterminado*, *Local/Servicio externo*, *Definido en .env*), **Probar**, **Usar por defecto**, alta/edición con
+plantillas (Ollama, Groq, Gemini, OpenAI, LM Studio…), **Cargar modelos**, clave API (una guardada nunca se muestra, solo «…1234»; vacío = conservar; casilla para eliminarla) y consentimiento
+para servicios externos. Detalle de seguridad en README y `docs/OPERATIONS.md` §7.
+
+**Modelo de embeddings** (`EmbeddingSettingsPanel`) — misma estructura, con diferencias deliberadas:
+
+- Una nota fija recuerda las reglas (se indexa solo con el modelo seleccionado; no consultable mientras se reindexa; volver a un modelo indexado es inmediato) y la cobertura
+  «indexados con el modelo activo: X de Y».
+- Campos propios: **prefijos de consulta y de documento**, **dimensiones** (Matryoshka, opcional), «Probar conexión» (muestra dimensión y latencia) y, para un proveedor **en uso**, modelo/prefijos/dimensiones
+  bloqueados con la explicación.
+- **Umbral de similitud** (opcional, por proveedor): a diferencia de los anteriores se puede editar con el proveedor **en uso** (solo afecta a la búsqueda y rige de inmediato, sin reindexar); la tarjeta lo muestra
+  («umbral 0,72») y la plantilla de EmbeddingGemma 2 lo trae calibrado. Vacío = el global del servidor.
+- La plantilla **«EmbeddingGemma 2 (local…)»** es la primera de la lista: apunta al servicio `embedder` (`http://embedder:8000/v1`), no pide clave y se trata como local (la réplica de `isLocalUrl` incluye `embedder`).
+- **Consentimiento reforzado:** un destino no local muestra un recuadro que dice que se enviará *el texto íntegro de todos los documentos* y cada pregunta, y exige la casilla antes de poder activarlo.
+- **Activación informada:** «Usar por defecto» pide primero la vista previa al servidor (sin red) y muestra un diálogo con el nº de documentos y fragmentos a reindexar, el host y el volumen de texto que se enviaría;
+  al confirmar, el worker reindexa y aparece un aviso por cada documento terminado (las notificaciones del procesamiento ya existentes).
+- **Vectores indexados:** una tabla por modelo (dimensión, nº de vectores, «En uso») con *Borrar vectores* para los no activos, con confirmación.
+- Un proveedor activo con la clave ilegible, o sin permiso, se muestra como tal; los errores del servidor (409 conflicto de prefijos/dimensión, 502 proveedor caído) llegan como avisos con su motivo.
+
+La cabecera de la pantalla principal marca «(externo)» junto al modelo de embeddings cuando es un servicio externo.
 
 ## 5. Diseño adaptable
 
@@ -150,7 +169,11 @@ tipos de `next build`. Lista de comprobación tras cambios en la interfaz:
       (éxito y, al terminar, «está listo» con «Abrir»).
 - [ ] Parar y arrancar la API: aparece «Sin conexión con la API» (persistente) y luego «Conexión restablecida».
 - [ ] Preguntar con el proveedor caído: aviso de error con «Abrir Ajustes».
-- [ ] Ajustes: probar, cargar modelos, guardar/activar un perfil local; un servicio externo sin permiso no se puede activar; eliminar con confirmación.
+- [ ] Ajustes (LLM): probar, cargar modelos, guardar/activar un perfil local; un servicio externo sin permiso no se puede activar; eliminar con confirmación.
+- [ ] Ajustes (embeddings, EmbeddingGemma 2 local): con el servicio `embedder` levantado, añadir la plantilla local → «Probar» (768 dim.) → «Usar por defecto»; el diálogo dice «Todo ocurre en su red» (sin host ni caracteres a enviar);
+      editar el proveedor activo: modelo/prefijos bloqueados pero el umbral editable (valor inválido → aviso «Umbral no válido»).
+- [ ] Ajustes (embeddings, servicio **externo**, con `scripts/dev_embedding_server.py`, ver OPERATIONS §12): probar conexión; guardar sin permiso → «Usar por defecto» da error de permiso; con permiso, el diálogo muestra documentos, fragmentos, host y caracteres;
+      tras confirmar, los documentos pasan a «procesando» y vuelven a «listo»; búsqueda y chat funcionan; volver al modelo local es inmediato (sin trabajos); borrar vectores del modelo de prueba y eliminar el proveedor.
 - [ ] Vista móvil (375 px): pestañas, visor deslizante ajustado al ancho, sin desbordamiento horizontal; `Esc` cierra el visor.
 - [ ] Consola del navegador sin errores inesperados.
 

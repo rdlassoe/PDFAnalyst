@@ -1,7 +1,7 @@
 # Historial de cambios
 
 Cronología de lo construido y, sobre todo, de **lo que se descubrió al verificar** (varias decisiones de diseño cambiaron por datos
-reales). Fecha de referencia: 2026-10-13. Las decisiones numeradas (D1–D16) están en [ARCHITECTURE.md](ARCHITECTURE.md).
+reales). Fecha de referencia: 2026-10-14. Las decisiones numeradas (D1–D18) están en [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Fase 1–5 — núcleo RAG local
 
@@ -64,6 +64,47 @@ reales). Fecha de referencia: 2026-10-13. Las decisiones numeradas (D1–D16) es
   autoajustable; estados vacíos; respeto de `prefers-reduced-motion`.
 - Documentación: `FRONTEND.md`, referencia de configuración y solución de problemas ampliadas.
 
+## Modelo de embeddings seleccionable (API externa o local)
+
+Decisiones del usuario: un modelo predeterminado en Ajustes; **indexar únicamente según el modelo seleccionado**; **sin modo combinado** por ahora; EmbeddingGemma 2 se usará **de forma
+externa** (no local) porque el hardware (≈3,5 GB de RAM libres, GPU de 6 GB ocupada por el LLM) lo haría demasiado lento. **Esa decisión fue rectificada: ver la sección «EmbeddingGemma 2 en local» más abajo.**
+
+- Datos verificados del modelo (fuentes oficiales): EmbeddingGemma 2, lanzado el 2026-10-06, Apache-2.0 (metadato), 768 dimensiones (Matryoshka 128–768), contexto 8 192, ≈270M solo texto,
+  no usar `float16`, prefijos oficiales `task: search result | query: ` y `title: none | text: `. **No se encontró ningún proveedor alojado confirmado** (solo el EmbeddingGemma original en Cloudflare
+  Workers AI); por eso se implementó un adaptador **genérico** (cualquier endpoint `/embeddings` compatible con OpenAI, u Ollama).
+- Nuevo módulo (`embedding_settings`, migración `0003`, router `/settings/embeddings`, panel en Ajustes): perfiles con clave cifrada, consentimiento explícito para destinos externos,
+  vista previa de lo que se enviaría, activación que comprueba acceso/dimensión/prefijos antes de cambiar, reindexado solo de lo que falta, vuelta inmediata a un modelo ya indexado,
+  borrado de vectores de modelos no activos, `/health` con cobertura. Reintentos 429/5xx y errores permanentes sin reintento; el worker resuelve el modelo activo al ejecutar y repite si cambia.
+- Refactor: validaciones compartidas en `net_validation`; los adaptadores se construyen desde una configuración explícita (`EmbedderConfig`).
+- Defecto corregido al verificar: con la URL base vacía el mensaje decía «servicio externo None» en lugar de «falta la URL base».
+- Verificado: 214 pruebas automáticas (37 de integración con el modelo e5 real servido por el protocolo OpenAI + 29 de los adaptadores), y en el navegador contra `scripts/dev_embedding_server.py`:
+  probar (solo se enviaron 55 caracteres), bloqueo sin permiso, vista previa, reindexado de 274 fragmentos en ≈15 s (≈240 mil caracteres recibidos, coincide con la vista previa), búsqueda y chat con
+  el modelo nuevo, vuelta inmediata al modelo local (sin trabajos ni peticiones externas), borrado de vectores y del proveedor.
+- **No verificado:** EmbeddingGemma 2 con un servicio real; calidad de recuperación de ese modelo frente a e5 (requiere la evaluación A/B de `eval/`); los prefijos que aplica cada servicio.
+
+## EmbeddingGemma 2 en local (rectificación de la decisión anterior)
+
+El usuario corrigió la decisión anterior: EmbeddingGemma 2 debe ejecutarse **localmente**, no como servicio externo. Hardware: ≈3,5 GB de RAM libres, GPU ocupada por el LLM, CPU i7-13620H.
+
+- **Ollama descartado, comprobado:** las compilaciones de `embeddinggemma-2` en Ollama exigen MLX («requires MLX support», solo Apple Silicon); se probaron dos etiquetas. Se sirve el modelo de Hugging Face con sentence-transformers.
+- **Modo solo texto:** se carga con `config_kwargs={"vision_config": None, "audio_config": None}` → ≈271M parámetros en lugar de ≈740M (carga en ≈6–9 s, 768 dimensiones); los prefijos oficiales del modelo coinciden con los de la plantilla
+  (verificado contra los `prompts` del propio modelo). No admite `float16` (la configuración lo rechaza). Su procesador importa `torchvision` aunque se use solo texto: sin él no carga (se añadió a la imagen).
+- **Servicio `embedder`** (`backend/app/embedding_server.py`, servicio del compose, sin puerto en el host): API `/v1/embeddings` de OpenAI, `/v1/models`, `/health`; validación de entrada, `dimensions` (Matryoshka) con
+  re-normalización, clave opcional, errores sin detalles internos; una sola copia del modelo para la API y el worker. Plantilla «EmbeddingGemma 2 (local)» en Ajustes (la primera); `embedder` entra en la lista de hosts locales.
+- **Defecto corregido al verificar:** la primera petición bloqueaba el servicio para siempre (el cerrojo de carga no es reentrante y la propiedad `dimension` volvía a pedirlo): prueba de regresión con 4 hilos simultáneos.
+- **Umbral de similitud por perfil** (migración `0004`, `embedding_profiles.min_similarity`, campo en Ajustes): con el modelo real, el umbral global de 0,80 (calibrado para e5) habría descartado por similitud la mitad de las
+  preguntas con respuesta (mediana 0,796). Con Gemma las preguntas con respuesta están en ≥ 0,722 y las sin respuesta en ≤ 0,714 (separables); la plantilla trae 0,72. Con él, el modo vectorial pasa de 0,60 a 1,00 en respuestas dadas
+  con abstención correcta 1,00. Es editable con el perfil activo (no cambia los vectores).
+- **Defecto de interfaz corregido:** la réplica `isLocalUrl` del frontend no incluía `embedder`, por lo que el perfil local habría mostrado el aviso de «servicio externo».
+- **Resultados medidos** (este equipo, CPU): carga del modelo ≈9 s; **≈1,7–1,9 GiB de RAM** en el contenedor; reindexar 274 fragmentos ≈83 s; evaluación `eval/` (22 preguntas): híbrido recall@3 **1,00** (e5 0,93), recall@5 1,00 (1,00),
+  MRR 0,78 (0,72); extremo a extremo con el LLM real **15/15** respuestas con cita correcta y **7/7** abstenciones.
+- **Corrección de las etiquetas de la evaluación** (hecha *después* de ver el resultado, por verificación en el texto): en b2 («quinta manera de llenarse la bolsa») la página 35 contiene el encabezado
+  «La quinta manera: Haced que vuestra propiedad sea una inversión rentable» y en b8 («Sharru Nada») el nombre aparece en las páginas 101–104, 110 y 111; se añadieron esas páginas a las esperadas (antes 13/15 citas, ahora 15/15).
+  Las páginas esperadas son «al menos una de estas».
+- Verificado: 240 pruebas automáticas (incluidas 3 con el modelo real `gemma2`, 21 del servicio y 4 nuevas del umbral por perfil), interfaz en el navegador. Una prueba antigua de pgvector (`test_phase1_pgvector`, plan `EXPLAIN` con HNSW) falló una
+  vez de cuatro ejecuciones y pasa al repetir: depende del planificador, no del cambio.
+- **No verificado:** que la ventaja sobre e5 se mantenga con otros documentos (un solo libro de 121 páginas); rendimiento de `bfloat16` en CPU; uso con GPU; el tiempo de indexación de colecciones grandes (≈3 fragmentos/s).
+
 ## Configuración y documentación
 
 - El `docker-compose.yml` ahora pasa a los contenedores todos los parámetros ajustables (antes solo algunos, de modo que, p. ej.,
@@ -72,6 +113,7 @@ reales). Fecha de referencia: 2026-10-13. Las decisiones numeradas (D1–D16) es
 
 ## Pendiente conocido
 
+- Repetir la evaluación A/B de EmbeddingGemma 2 frente a e5 con más documentos y preguntas de usuarios reales; medir `bfloat16` y la indexación de colecciones grandes.
 - Evaluar con más documentos reales (técnicos/legales, con tablas) y preguntas de usuarios reales.
 - Rendimiento a escala (> 50 000 fragmentos) y recall de HNSW.
 - Verificación con servicios reales de Groq, Gemini y OpenAI.

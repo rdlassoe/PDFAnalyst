@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
 
     with SessionLocal() as s:
         if args.cmd == "models":
-            active = get_or_create_model_row(s, get_embedder())
+            active = get_or_create_model_row(s, get_embedder(s))
             s.commit()
             for row in embedding_counts(s):
                 row["active"] = row["id"] == active.id
@@ -48,11 +48,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "index-status":
             print(json.dumps(vector_index.index_status(engine), indent=2))
         elif args.cmd == "index-create":
-            model = get_or_create_model_row(s, get_embedder())
+            model = get_or_create_model_row(s, get_embedder(s))
             s.commit()
             print("creado:", vector_index.create_hnsw_index(engine, model, args.m, args.ef_construction))
         elif args.cmd == "index-drop":
-            model = get_or_create_model_row(s, get_embedder())
+            model = get_or_create_model_row(s, get_embedder(s))
             s.commit()
             vector_index.drop_hnsw_index(engine, model.id)
             print("eliminado índice del modelo", model.id)
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             n = requeue_all_for_active_model(s)
             print(f"{n} documentos encolados para generar embeddings con el modelo activo")
         elif args.cmd == "purge-model":
-            active = get_or_create_model_row(s, get_embedder())
+            active = get_or_create_model_row(s, get_embedder(s))
             if args.model_id == active.id:
                 print("No se puede purgar el modelo activo.", file=sys.stderr)
                 return 2

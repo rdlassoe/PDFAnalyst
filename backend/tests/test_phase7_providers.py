@@ -88,7 +88,7 @@ def test_external_provider_is_blocked_until_explicitly_allowed():
     [
         ("http://localhost:11434", True), ("http://127.0.0.1:1234/v1", True), ("http://[::1]:8000", True),
         ("http://192.168.1.50:1234", True), ("http://10.1.2.3/v1", True), ("http://172.20.0.5", True),
-        ("http://ollama:11434", True), ("http://host.docker.internal:11434", True),
+        ("http://ollama:11434", True), ("http://embedder:8000/v1", True), ("http://host.docker.internal:11434", True),
         ("https://api.groq.com/openai/v1", False), ("http://8.8.8.8/v1", False),
         ("http://10.evil.com/v1", False),  # un DOMINIO que empieza por «10.» NO es local
         ("http://192.168.evil.com/v1", False), ("http://localhost.evil.com/v1", False), ("not a url", False),

@@ -163,13 +163,9 @@ def run_ingest(session: Session, job: ProcessingJob) -> None:
     log.info("Ingest %s: %d páginas, %d chunks, %d con OCR", doc.id, len(extracted.pages), len(chunks), extracted.ocr_pages)
 
 
-def run_embed(session: Session, job: ProcessingJob, embedder: Embedder | None = None) -> None:
-    embedder = embedder or get_embedder()
+def _embed_missing(session: Session, job: ProcessingJob, doc: Document, embedder: Embedder) -> int:
+    """Calcula y guarda los embeddings que faltan de `doc` para el modelo de `embedder` (reanudable, sin duplicados)."""
     s = get_settings()
-    doc = session.get(Document, job.document_id)
-    if doc is None:
-        raise PdfError("Documento inexistente")
-
     model = get_or_create_model_row(session, embedder)
     session.commit()
 
@@ -200,31 +196,85 @@ def run_embed(session: Session, job: ProcessingJob, embedder: Embedder | None = 
         session.execute(stmt.on_conflict_do_nothing(index_elements=["chunk_id", "model_id"]))
         job.progress = 0.4 + 0.6 * min(start + batch, len(missing)) / total
         session.commit()
+    log.info("Embed %s: %d vectores nuevos (modelo %s)", doc.id, len(missing), model.name)
+    return len(missing)
 
-    if model.id == active_model_id(session, embedder):
+
+def run_embed(session: Session, job: ProcessingJob, embedder: Embedder | None = None) -> None:
+    """Indexa el documento con el modelo ACTIVO (el perfil de embeddings elegido en Ajustes) en el momento de ejecutar.
+
+    Si el modelo activo cambia mientras se procesa, se repite con el nuevo (máx. 3 veces) para no dejar el documento «listo»
+    sin vectores del modelo vigente.
+    """
+    doc = session.get(Document, job.document_id)
+    if doc is None:
+        raise PdfError("Documento inexistente")
+    ready = False
+    for _ in range(3):
+        emb = embedder or get_embedder(session)
+        _embed_missing(session, job, doc, emb)
+        if embedder is not None or get_embedder(session) is emb:
+            ready = True
+            break
+    if ready:
         doc.status, doc.error = "ready", None
     session.commit()
-    log.info("Embed %s: %d vectores nuevos (modelo %s)", doc.id, len(missing), model.name)
 
 
 def active_model_id(session: Session, embedder: Embedder | None = None) -> int:
-    embedder = embedder or get_embedder()
+    embedder = embedder or get_embedder(session)
     return get_or_create_model_row(session, embedder).id
 
 
-def requeue_all_for_active_model(session: Session) -> int:
-    """Tras cambiar de modelo de embeddings: encola `embed` para todos los documentos con chunks."""
-    model_id = active_model_id(session)
-    doc_ids = session.scalars(
-        select(DocumentChunk.document_id).group_by(DocumentChunk.document_id)
-    ).all()
-    for did in doc_ids:
-        session.execute(
-            Document.__table__.update().where(Document.id == did).values(status="processing")
+def model_coverage(session: Session, model_id: int) -> dict[uuid.UUID, tuple[int, int]]:
+    """Por documento con fragmentos: (nº de fragmentos, nº con vector de ese modelo)."""
+    rows = session.execute(
+        select(DocumentChunk.document_id, func.count(DocumentChunk.id), func.count(ChunkEmbedding.chunk_id))
+        .join(
+            ChunkEmbedding,
+            (ChunkEmbedding.chunk_id == DocumentChunk.id) & (ChunkEmbedding.model_id == model_id),
+            isouter=True,
         )
-        enqueue_job(session, did, "embed", {"model_id": model_id})
+        .group_by(DocumentChunk.document_id)
+    )
+    return {did: (n, e) for did, n, e in rows}
+
+
+def requeue_for_model(session: Session, model_id: int) -> dict:
+    """Tras activar un modelo: los documentos ya indexados con él quedan listos y el resto se encola.
+
+    Devuelve {documents, already_indexed, queued}. Los documentos encolados pasan a «processing» (no consultables hasta
+    terminar: no se mezclan vectores de modelos distintos).
+    """
+    already = queued = 0
+    for did, (n, e) in model_coverage(session, model_id).items():
+        if e >= n:
+            already += 1
+            # Listo salvo que tenga trabajo pendiente (p. ej. un `ingest` en cola).
+            busy = session.scalar(
+                select(ProcessingJob.id).where(
+                    ProcessingJob.document_id == did, ProcessingJob.status.in_(("queued", "running"))
+                ).limit(1)
+            )
+            if busy is None:
+                session.execute(
+                    Document.__table__.update()
+                    .where(Document.id == did, Document.status == "processing")
+                    .values(status="ready", error=None)
+                )
+        else:
+            queued += 1
+            session.execute(Document.__table__.update().where(Document.id == did).values(status="processing", error=None))
+            enqueue_job(session, did, "embed", {"model_id": model_id})
     session.commit()
-    return len(doc_ids)
+    return {"documents": already + queued, "already_indexed": already, "queued": queued}
+
+
+def requeue_all_for_active_model(session: Session) -> int:
+    """Tras cambiar de modelo de embeddings (CLI): encola `embed` de los documentos sin vectores del modelo activo."""
+    model_id = active_model_id(session)
+    session.commit()
+    return requeue_for_model(session, model_id)["queued"]
 
 
 def embedding_counts(session: Session) -> list[dict]:

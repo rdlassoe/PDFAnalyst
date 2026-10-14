@@ -64,7 +64,7 @@ def _database():
 
 _TABLES = (
     "message_citations, messages, conversations, collection_documents, collections, "
-    "chunk_embeddings, document_chunks, document_pages, processing_jobs, documents, embedding_models, llm_profiles, app_settings"
+    "chunk_embeddings, document_chunks, document_pages, processing_jobs, documents, embedding_models, llm_profiles, embedding_profiles, app_settings"
 )
 
 

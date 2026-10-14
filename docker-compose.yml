@@ -23,6 +23,8 @@ x-backend-env: &backend-env
   MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
   EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
   EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+  EMBEDDING_ALLOW_EXTERNAL: ${EMBEDDING_ALLOW_EXTERNAL:-false}
+  EMBEDDING_TIMEOUT_S: ${EMBEDDING_TIMEOUT_S:-120}
   OCR_MIN_CHARS: ${OCR_MIN_CHARS:-30}
   OCR_DPI: ${OCR_DPI:-200}
   CHUNK_TARGET_CHARS: ${CHUNK_TARGET_CHARS:-1200}
@@ -71,6 +73,31 @@ services:
       - "127.0.0.1:11435:11434" # solo loopback; 11434 queda libre por si hay un Ollama en el host
     volumes:
       - ${OLLAMA_MODELS_SOURCE:-ollamadata}:/root/.ollama/models${OLLAMA_MODELS_MODE:-}
+
+  # Servicio LOCAL de embeddings (por defecto EmbeddingGemma 2, solo texto, en CPU). Un único proceso con el modelo: la API y el worker lo usan por HTTP
+  # (perfil «EmbeddingGemma 2 (local)» en Ajustes → Modelo de embeddings). El modelo se carga en la primera petición; no sale texto del equipo.
+  # Descarga previa del modelo (≈1,5 GB): docker compose run --rm embedder python -m app.embedding_server --download
+  embedder:
+    build: ./backend
+    command: ["python", "-m", "app.embedding_server"]
+    restart: unless-stopped
+    environment:
+      HF_HOME: /data/models
+      EMBED_SERVER_MODEL: ${EMBED_SERVER_MODEL:-google/embeddinggemma-2}
+      EMBED_SERVER_TEXT_ONLY: ${EMBED_SERVER_TEXT_ONLY:-true}
+      EMBED_SERVER_DTYPE: ${EMBED_SERVER_DTYPE:-float32}
+      EMBED_SERVER_DEVICE: cpu
+      EMBED_SERVER_MAX_SEQ_LENGTH: ${EMBED_SERVER_MAX_SEQ_LENGTH:-2048}
+      EMBED_SERVER_PRELOAD: ${EMBED_SERVER_PRELOAD:-false}
+      EMBED_SERVER_THREADS: ${EMBED_SERVER_THREADS:-0}
+    volumes:
+      - appdata:/data
+    mem_limit: ${EMBED_SERVER_MEM_LIMIT:-3g} # protege al equipo: el modelo de solo texto ocupa ≈1,9 GiB medidos en fp32
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   migrate:
     build: ./backend

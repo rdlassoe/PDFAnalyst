@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_session
 from ..providers import LLMError
-from ..services.embeddings import get_embedder
-from ..services.ingestion import embedding_counts
+from ..services import embedding_settings
+from ..services.ingestion import embedding_counts, model_coverage
 from ..services.llm_settings import get_llm_provider
 
 router = APIRouter(tags=["system"])
@@ -25,8 +25,18 @@ def health(session: Session = Depends(get_session)):
         out["pgvector"] = {"ok": ver is not None, "version": ver}
     except Exception as exc:  # noqa: BLE001
         out["database"] = {"ok": False, "detail": exc.__class__.__name__}
-    emb = get_embedder()
-    out["embeddings"] = {"provider": emb.provider, "model": emb.name, "local": s.embedding_provider != "api"}
+    try:
+        # Sin llamar al proveedor (sería lento y, si es externo, enviaría datos en cada sondeo): solo configuración y cobertura.
+        cfg = embedding_settings.active_config(session)
+        row = embedding_settings.active_model_row(session)
+        cov = model_coverage(session, row.id if row else -1)
+        out["embeddings"] = {
+            "ok": True, "provider": cfg.kind, "model": cfg.model, "external": cfg.external,
+            "local": not cfg.external, "dimension": row.dimension if row else None,
+            "documents_total": len(cov), "documents_indexed": sum(1 for n, e in cov.values() if e >= n),
+        }
+    except Exception as exc:  # noqa: BLE001
+        out["embeddings"] = {"ok": False, "detail": str(exc), "provider": None, "model": None, "local": None, "external": None}
     try:
         provider = get_llm_provider(session)
         h = provider.health()

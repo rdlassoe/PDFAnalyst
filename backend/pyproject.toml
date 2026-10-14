@@ -37,4 +37,5 @@ markers = [
     "slow: usa el modelo real de embeddings (descarga ~120 MB la primera vez)",
     "ocr: requiere Tesseract instalado",
     "ollama: requiere Ollama en ejecución con el modelo configurado",
+    "gemma2: usa el modelo real google/embeddinggemma-2 (se omite si no está descargado en la caché)",
 ]

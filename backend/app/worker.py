@@ -91,9 +91,10 @@ def process_one(session: Session) -> bool:
 
 def _is_permanent(exc: Exception) -> bool:
     """Errores que no mejoran reintentando (PDF sin texto, cifrado, etc.)."""
+    from .services.embeddings import EmbeddingError
     from .services.pdf_extract import PdfError
 
-    return isinstance(exc, PdfError)
+    return isinstance(exc, PdfError) or (isinstance(exc, EmbeddingError) and exc.permanent)
 
 
 def main() -> None:

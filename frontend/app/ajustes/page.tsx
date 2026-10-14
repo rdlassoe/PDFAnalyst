@@ -3,6 +3,7 @@
 import { ArrowLeft, Cpu, Database, Settings } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import EmbeddingSettingsPanel from "@/components/EmbeddingSettingsPanel";
 import LlmSettingsPanel from "@/components/LlmSettingsPanel";
 import { api, type Health } from "@/lib/api";
 
@@ -44,14 +45,15 @@ export default function AjustesPage() {
 
         <section aria-labelledby="emb-h" className="mt-10 border-t border-line pt-6">
           <h2 id="emb-h" className="flex items-center gap-2 text-lg font-semibold">
-            <Database className="h-5 w-5 text-petrol" aria-hidden /> Búsqueda (embeddings)
+            <Database className="h-5 w-5 text-petrol" aria-hidden /> Modelo de embeddings (búsqueda e indexación)
           </h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            La búsqueda es siempre local e independiente del LLM: modelo{" "}
-            <span className="font-medium text-ink">{health?.embeddings.model ?? "…"}</span> sobre PostgreSQL + pgvector. Cambiar de
-            proveedor de generación no requiere reindexar. Para cambiar el modelo de embeddings (requiere reindexar) consulte
-            docs/OPERATIONS.md.
+          <p className="mb-4 mt-1 text-sm text-ink-soft">
+            Convierte el texto de los documentos y sus preguntas en vectores para buscar. Es independiente del modelo de lenguaje. Modelo activo:{" "}
+            <strong>{health?.embeddings.model ?? "…"}</strong>
+            {health?.embeddings.external ? " (servicio externo)" : health?.embeddings.model ? " (local)" : ""}. Puede usar otro, incluso un servicio externo,
+            sabiendo que <strong>un servicio externo recibe el texto íntegro de sus documentos</strong>.
           </p>
+          <EmbeddingSettingsPanel />
         </section>
       </main>
     </div>

@@ -291,3 +291,35 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+EMBEDDING_KINDS = ("ollama", "openai-compatible")
+
+
+class EmbeddingProfile(Base):
+    """Proveedor de embeddings configurado desde Ajustes. La clave API se guarda CIFRADA (services/credentials.py).
+
+    Aquí solo vive la CONFIGURACIÓN de acceso; el registro de espacios vectoriales sigue en `embedding_models`.
+    """
+
+    __tablename__ = "embedding_profiles"
+    __table_args__ = (
+        CheckConstraint(f"kind IN {EMBEDDING_KINDS}", name="ck_embedding_profiles_kind"),
+        CheckConstraint("min_similarity IS NULL OR (min_similarity > 0 AND min_similarity <= 1)", name="ck_embedding_profiles_min_similarity"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String(256), nullable=False)
+    api_key_enc: Mapped[str | None] = mapped_column(Text)
+    allow_external: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    query_prefix: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    passage_prefix: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    dimensions: Mapped[int | None] = mapped_column(Integer)  # truncado Matryoshka opcional (solo modelos MRL)
+    min_similarity: Mapped[float | None] = mapped_column(Float)  # umbral coseno de relevancia de ESTE modelo (None = el global)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

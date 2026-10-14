@@ -47,18 +47,28 @@ docker compose exec api python -m app.cli index-drop     # volver a búsqueda ex
 
 ## 4. Cambiar el modelo de embeddings (reindexación)
 
-Los vectores de modelos distintos **nunca se mezclan**: cada fila de `chunk_embeddings` lleva su `model_id` y cada
-consulta filtra por el modelo activo.
+Los vectores de modelos distintos **nunca se mezclan**: cada fila de `chunk_embeddings` lleva su `model_id` y cada consulta filtra por el modelo activo.
+Se indexa **solo con el modelo seleccionado**; los vectores de los demás se conservan hasta que se borren.
 
-1. Edite `EMBEDDING_MODEL` (y, si el modelo lo requiere, `EMBEDDING_QUERY_PREFIX` / `EMBEDDING_PASSAGE_PREFIX`) en `.env`.
-   Compruebe la licencia de los pesos del nuevo modelo (docs/LICENSES.md).
-2. `docker compose up -d api worker` (recrea los contenedores con la nueva configuración).
-3. `docker compose exec api python -m app.cli reindex` — encola la generación de embeddings para todos los documentos.
-   Mientras tanto los documentos figuran como `processing` y **no** se consultan con vectores incompatibles.
-4. Cuando todos estén `ready`: `python -m app.cli index-create` si usa HNSW y `python -m app.cli purge-model <id_antiguo>`
-   para liberar espacio (el modelo activo no se puede purgar).
+**Desde la interfaz (recomendado):** Ajustes → «Modelo de embeddings» (README §«Modelo de embeddings»). Añadir el proveedor, *Probar conexión*, *Usar por defecto*
+y confirmar el diálogo con la vista previa (documentos y texto que se enviaría). Qué ocurre al activar:
 
-El sistema se niega a arrancar la indexación si un modelo ya registrado cambia de dimensión o de prefijos.
+1. Se comprueba el acceso **antes de cambiar nada**: consentimiento (si es externo), conexión, credenciales, dimensión y compatibilidad de prefijos con los vectores ya
+   indexados de ese modelo. Si algo falla, el modelo activo no cambia.
+2. Los documentos que ya tienen todos los vectores de ese modelo quedan `ready` al instante; el resto pasa a `processing` y se encola un job `embed` (el worker usa el modelo activo
+   *en el momento de ejecutar*; si cambia a mitad de trabajo, repite con el nuevo). Mientras tanto **no son consultables**.
+3. Volver a un modelo ya indexado es inmediato. Para liberar espacio: «Vectores indexados» → *Borrar vectores* (solo de modelos no activos; volver a ellos exigirá reindexar).
+
+**Por línea de comandos / sin interfaz** (proveedor del entorno): edite `EMBEDDING_PROVIDER` (`sentence-transformers` | `ollama`), `EMBEDDING_MODEL` y, si el modelo lo requiere,
+`EMBEDDING_QUERY_PREFIX` / `EMBEDDING_PASSAGE_PREFIX` en `.env` → `docker compose up -d api worker` → `docker compose exec api python -m app.cli reindex` (encola solo lo que falte) →
+cuando todo esté `ready`, `python -m app.cli index-create` si usa HNSW y `python -m app.cli purge-model <id_antiguo>` (el modelo activo no se puede purgar).
+Un Ollama remoto en el entorno exige `EMBEDDING_ALLOW_EXTERNAL=true`.
+
+**Privacidad:** un proveedor externo recibe el texto íntegro de los fragmentos de todos los documentos al indexar y cada pregunta al buscar. Las claves se guardan cifradas
+(misma clave maestra que las del LLM, §7: `db.dump` no las revela y `secret.key` no se copia en las copias de seguridad). **Prefijos:** un modelo usa siempre los mismos al indexar y
+buscar; el sistema rechaza (409) una activación con prefijos o dimensión distintos de los registrados y no permite editar el modelo/prefijos/dimensiones de un proveedor en uso.
+
+**EmbeddingGemma 2 en local** (servicio `embedder` incluido en el compose): §13. **Sin servicios de pago para probar un proveedor externo:** §12.
 
 ## 5. Copias de seguridad y recuperación
 
@@ -82,7 +92,7 @@ Las migraciones están en `backend/alembic/versions` y se aplican al arrancar me
 
 **Importante:** `migrate`, `api`, `worker` y `frontend` son imágenes distintas; tras actualizar el código use
 `docker compose up -d --build` para reconstruirlas todas (si solo reconstruye `api`, la migración nueva no se aplica).
-Versiones: `0001` esquema inicial · `0002` ajustes de LLM (`llm_profiles`, `app_settings`).
+Versiones: `0001` esquema inicial · `0002` ajustes de LLM (`llm_profiles`, `app_settings`) · `0003` ajustes de embeddings (`embedding_profiles`).
 
 ## 7. Proveedor de generación (Ajustes)
 
@@ -126,13 +136,17 @@ Hasta entonces, no exponga los puertos fuera de `127.0.0.1`.
 | `ports are not available: 127.0.0.1:5432` en Windows | Puerto reservado/ocupado. Use `POSTGRES_HOST_PORT` (por defecto 5433). |
 | `/health` → generación `ok: false` | Ollama sin el modelo: `ollama pull qwen3:8b` (en el host). |
 | Documento `failed: No se extrajo texto…` | PDF escaneado con OCR desactivado o ilegible. Active OCR y use "Reintentar". |
-| Respuestas siempre "sin evidencia suficiente" | Umbral `RETRIEVAL_MIN_SIMILARITY` demasiado alto para el modelo de embeddings; calibre con `eval/`. |
+| Respuestas siempre "sin evidencia suficiente" | Umbral de similitud demasiado alto para el modelo de embeddings (cada modelo reparte sus similitudes de forma distinta): calibre con `eval/` (§11) y fije el umbral **del proveedor** en Ajustes, o `RETRIEVAL_MIN_SIMILARITY` para el del entorno. |
 | Windows: "Control de aplicaciones bloqueó este archivo" al ejecutar Python/numpy en el host | Política de seguridad del equipo. Ejecute el backend y las pruebas en Docker (Linux). |
 | Cambié una variable del `.env` y no tiene efecto | Hay que recrear los contenedores (`docker compose up -d api worker`). Solo llegan al contenedor las variables que el `docker-compose.yml` enumera (ver §10); el frontend necesita `--build` si cambia `PUBLIC_API_URL`. |
 | La pantalla muestra «Sin conexión con la API» | La API no responde: `docker compose ps` / `docker compose logs api`. Se reintenta sola y avisa al recuperarse. Un error CORS o `ERR_FAILED` en la consola justo al reiniciar la API es esperable (mientras arranca no hay respuesta que lleve cabeceras CORS). |
 | Ajustes: «Clave ilegible» en un proveedor | Cambió la clave maestra (`APP_SECRET_KEY` / `secret.key`) o se restauró una copia en otro entorno. Edite el proveedor y vuelva a introducir la clave (§7). |
 | Preguntar devuelve «El proveedor … es externo … no permitido» | El perfil activo es un servicio externo sin el permiso de envío. Márquelo en Ajustes (tras leer qué se envía) o vuelva a un proveedor local. |
 | «Probar» en Ajustes: «Credenciales rechazadas» / «Ruta no encontrada» | Clave incorrecta (401/403) o URL base equivocada (404; debe terminar antes de `/chat/completions`). |
+| Tras cambiar de modelo de embeddings los documentos siguen «procesando» | Es lo esperado mientras el worker reindexa (`docker compose logs -f worker`); si el proveedor es externo, depende de su velocidad y límites. Si un documento queda `failed`: «Reintentar». Comprobar la clave y la conexión con *Probar* en Ajustes. |
+| Activar un proveedor de embeddings devuelve 409 «prefijos…» o «dimensión…» | Ese modelo ya tiene vectores con otros prefijos/dimensión. Restaure los originales, o borre los vectores de ese modelo en «Vectores indexados», o use otro nombre de modelo. |
+| Activar devuelve 409 «es externo…» | Marque el permiso de envío del texto en el proveedor (tras leer qué se envía) o use un servicio local. |
+| Preguntar o buscar devuelve 503 con «No se pudo conectar…» o «credenciales» | El proveedor de embeddings activo no responde o rechaza la clave. Los documentos no se pierden: arregle el proveedor o vuelva al modelo local (inmediato). La gestión de documentos sigue funcionando. |
 | `docker compose up -d` no aplica la migración nueva | La imagen `migrate` es independiente: use `docker compose up -d --build`. |
 | Una conversación eliminada reaparece | Se pulsó «Deshacer», o la página se cerró antes de que el borrado diferido llegara a la API (fallo seguro). Vuelva a eliminarla. |
 | El PDF se ve cortado en el visor en móvil | Reconstruya el frontend (`docker compose build frontend`): las versiones anteriores no ajustaban el PDF al ancho. |
@@ -155,8 +169,17 @@ reprocesar (el cambio de modelo de embeddings: §4).
 | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` | `sentence-transformers` / `intfloat/multilingual-e5-small` | api, worker | Modelo de embeddings (cambiarlo exige reindexar, §4). |
 | `EMBEDDING_QUERY_PREFIX` / `EMBEDDING_PASSAGE_PREFIX` | `"query: "` / `"passage: "` | api, worker | Prefijos que exige el modelo (entre comillas, con el espacio). |
 | `EMBEDDING_BATCH_SIZE` / `EMBEDDING_DEVICE` | `32` / `cpu` | worker | Lote y dispositivo (`cuda` solo con una imagen con CUDA). |
+| `EMBEDDING_ALLOW_EXTERNAL` | `false` | api, worker | Permiso para un Ollama **remoto** del perfil «Entorno» (envía el texto de los documentos). Los perfiles de Ajustes usan su propia casilla. |
+| `EMBEDDING_TIMEOUT_S` | `120` | api, worker | Tiempo máximo por petición a un proveedor de embeddings por HTTP (la primera petición al servicio local carga el modelo: ≈10 s en este equipo). |
+| `EMBED_SERVER_MODEL` | `google/embeddinggemma-2` | embedder | Modelo de sentence-transformers que sirve el servicio local (§13). |
+| `EMBED_SERVER_TEXT_ONLY` | `true` | embedder | `true` = solo el codificador de texto (≈270M parámetros); `false` = carga también visión/audio (≈740M, mucha más RAM). |
+| `EMBED_SERVER_DTYPE` | `float32` | embedder | `float32` o `bfloat16` (menos memoria). **`float16` se rechaza**: EmbeddingGemma 2 no lo admite. |
+| `EMBED_SERVER_DEVICE` / `EMBED_SERVER_THREADS` | `cpu` / `0` | embedder | Dispositivo e hilos de PyTorch (`0` = por defecto). Limite los hilos si el equipo se satura al indexar. |
+| `EMBED_SERVER_MAX_SEQ_LENGTH` / `EMBED_SERVER_MAX_BATCH` | `2048` / `64` | embedder | Tope de tokens por texto (acota la memoria; el modelo admite 8192) y de textos por petición. |
+| `EMBED_SERVER_PRELOAD` / `EMBED_SERVER_API_KEY` | `false` / vacío | embedder | Cargar el modelo al arrancar (si no, en la primera petición) / exigir `Authorization: Bearer` (opcional). |
+| `EMBED_SERVER_MEM_LIMIT` | `3g` | embedder | Tope de memoria del contenedor (medido: ≈1,9 GiB en uso con el modelo cargado). |
 | `RETRIEVAL_TOP_K` / `RETRIEVAL_CANDIDATES` | `6` / `30` | api | Fragmentos que llegan al LLM / candidatos por rama. |
-| `RETRIEVAL_MIN_SIMILARITY` | `0.80` | api | Umbral coseno de relevancia. **No separa por sí solo** preguntas con y sin respuesta (README §Estado); la abstención fiable la aporta el LLM. |
+| `RETRIEVAL_MIN_SIMILARITY` | `0.80` | api | Umbral coseno de relevancia por defecto (calibrado para e5, que comprime las similitudes). Un proveedor de Ajustes puede llevar el suyo (EmbeddingGemma 2: 0,72). **No separa por sí solo** preguntas con y sin respuesta con e5 (README §Estado); la abstención fiable la aporta el LLM. |
 | `RETRIEVAL_FTS_MIN_COVERAGE` | `0.5` | api | Fracción de términos distintivos de la pregunta que debe contener un fragmento. |
 | `RETRIEVAL_COMMON_TERM_RATIO` | `0.10` | api | Un término presente en más de este % de fragmentos (mín. 2) es «común» y no guía la búsqueda textual. |
 | `HYBRID_ENABLED` / `RRF_K` | `true` / `60` | api | Recuperación híbrida y constante de la fusión RRF. |
@@ -187,3 +210,55 @@ python eval/e2e.py eval/questions.X.jsonl eval/_resultado.json
 Reglas de lectura: las páginas esperadas son «al menos una de estas» (la misma historia puede aparecer en varias); incluya ≥ 20 % de
 preguntas sin respuesta, parecidas en estilo a las reales; repita tras cambiar el proveedor/modelo LLM, el modelo de embeddings o los
 parámetros de §10, y verifique a mano los fallos antes de concluir (varios «fallos» iniciales eran citas correctas no previstas).
+
+## 12. Probar embeddings por API sin servicios de pago
+
+`scripts/dev_embedding_server.py` es un servidor de **desarrollo** con la API `/v1/embeddings` de OpenAI que sirve el modelo e5 local y registra cuántos textos y caracteres recibe
+(sirve para comprobar *qué* saldría del equipo hacia un servicio externo real). Un contenedor desechable en la red del compose:
+
+```bash
+docker run --rm -d --name emb-stub --network pdfanalyst_default -e HF_HOME=/data/models -e STUB_API_KEY=clave-de-prueba-123456 \
+  -v pdfanalyst_appdata:/data -v "$PWD/scripts":/stub:ro pdfanalyst-api python /stub/dev_embedding_server.py
+# Ajustes → Modelo de embeddings → «Otro servicio compatible»: URL base http://emb-stub:9999/v1, clave de arriba, modelo cualquiera (p. ej. e5-stub),
+#   prefijos «query: » / «passage: ». Un nombre de host se trata como servicio EXTERNO (pide el permiso de envío), útil para probar el consentimiento.
+docker logs -f emb-stub      # qué recibe: nº de textos/caracteres por petición
+docker rm -f emb-stub        # al terminar; luego, en Ajustes: volver al modelo local, borrar sus vectores y eliminar el proveedor de prueba
+```
+
+Esta prueba reindexa **tus documentos reales** (en tu propia máquina, sin salir de ella): los deja `processing` unos segundos. No es un servicio de producción.
+
+## 13. EmbeddingGemma 2 en local (servicio `embedder`)
+
+El `docker-compose.yml` incluye el servicio **`embedder`** (`backend/app/embedding_server.py`): un único proceso con el modelo `google/embeddinggemma-2` (Apache-2.0) cargado en
+**modo solo texto** (≈271M parámetros en lugar de ≈740M: se omiten los codificadores de visión y audio) y expuesto con la API `/v1/embeddings` de OpenAI **solo dentro de la red de Docker**
+(sin puerto en el host). La API y el worker lo usan como cualquier otro proveedor por HTTP; así hay una sola copia del modelo en memoria. Ningún texto sale del equipo.
+
+**Puesta en marcha (una vez):**
+
+```bash
+docker compose run --rm embedder python -m app.embedding_server --download   # ≈1,5 GB en el volumen appdata (caché de Hugging Face)
+docker compose up -d --build                                                 # levanta `embedder`, con torchvision incluido en la imagen
+```
+
+Después, en Ajustes → Modelo de embeddings: **Añadir proveedor** → plantilla *EmbeddingGemma 2 (local…)* → *Probar conexión* (la primera vez carga el modelo) → *Usar por defecto*.
+La plantilla ya trae la URL `http://embedder:8000/v1`, los prefijos oficiales (`task: search result | query: ` y `title: none | text: `) y el umbral de similitud 0,72.
+
+**Medidas en este equipo** (i7-13620H, sin GPU para embeddings, Docker con 8 GB): carga del modelo ≈9 s; 768 dimensiones; **≈1,7–1,9 GiB de RAM** en el contenedor con el modelo cargado
+(la API y el worker, sin el modelo e5 cargado, ocupan ≈100 MB cada uno); indexar 274 fragmentos ≈83 s (≈3 fragmentos/s). Con la memoria justa: `EMBED_SERVER_DTYPE=bfloat16`
+reduce los pesos a la mitad (no medido aquí: puede cambiar la velocidad en CPU), y `EMBED_SERVER_MAX_SEQ_LENGTH` acota el pico al indexar. Para liberar la memoria, vuelva al modelo «Entorno»
+(`docker compose stop embedder`).
+
+**Evaluación frente a e5** (`eval/questions.babilonia.jsonl`, 22 preguntas; ver `eval/RESULTS.md`): híbrido recall@3 1,00 (e5: 0,93), recall@5 1,00 (1,00), MRR 0,78 (0,72); extremo a extremo 15/15
+respuestas con cita correcta y 7/7 abstenciones. Muestra pequeña de un solo documento.
+
+**Solución de problemas del servicio:**
+
+| Síntoma | Causa probable / solución |
+|---------|---------------------------|
+| *Probar conexión* falla con «No se pudo conectar» | El servicio no está levantado o aún arranca: `docker compose ps embedder` / `docker compose logs embedder`. |
+| La primera petición tarda o da *timeout* | Carga del modelo (≈10 s aquí; más con disco lento). Suba `EMBEDDING_TIMEOUT_S` o use `EMBED_SERVER_PRELOAD=true`. |
+| `503 El modelo no está disponible` | El modelo no se pudo cargar: `docker compose logs embedder` (falta de memoria → suba `EMBED_SERVER_MEM_LIMIT`, use `bfloat16`; modelo sin descargar y sin red → ejecute `--download`). |
+| El contenedor se reinicia (OOM) | Se alcanzó `EMBED_SERVER_MEM_LIMIT` o la memoria de la VM de Docker. Libere memoria, use `bfloat16` o suba el tope. |
+| `ImportError … torchvision` al cargar | Imagen antigua: el procesador del modelo importa torchvision aunque se use solo texto. `docker compose build embedder` (el `Dockerfile` ya lo instala). |
+| `EMBED_SERVER_DTYPE debe ser float32 o bfloat16` | EmbeddingGemma 2 no admite `float16`; se rechaza a propósito. |
+| Quiero usarlo desde Ollama | **No funciona en Windows/Linux con CUDA**: las compilaciones de `embeddinggemma-2` en Ollama exigen MLX (solo Apple Silicon). Por eso se sirve con sentence-transformers. |

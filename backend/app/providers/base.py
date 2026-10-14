@@ -32,7 +32,7 @@ class LLMProvider(ABC):
         """Debe devolver {'ok': bool, 'detail': str}; nunca lanzar."""
 
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal", "ollama", "db"}
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal", "ollama", "embedder", "db"}
 
 
 def is_local_url(url: str) -> bool:

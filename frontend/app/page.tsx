@@ -203,7 +203,11 @@ export default function Home() {
         <div className="ml-auto flex items-center gap-4 text-xs text-ink-soft">
           <div className="hidden items-center gap-4 md:flex" aria-label="Estado del sistema">
             <Dot ok={health?.database.ok && health.pgvector.ok} label="PostgreSQL + pgvector" detail={health?.pgvector.version ? `pgvector ${health.pgvector.version}` : undefined} />
-            <Dot ok={health ? true : undefined} label={`Embeddings: ${health?.embeddings.model ?? "…"}`} detail="Modelo local" />
+            <Dot
+              ok={health?.embeddings.ok}
+              label={`Embeddings: ${health?.embeddings.model ?? "…"}${health?.embeddings.external ? " (externo)" : ""}`}
+              detail={health?.embeddings.external ? "Servicio externo: recibe el texto de los documentos" : health?.embeddings.detail ?? "Modelo local"}
+            />
             <Dot ok={health?.generation.ok} label={`Generación: ${health?.generation.model ?? "…"}`} detail={health?.generation.detail} />
           </div>
           <Link href="/ajustes" className="btn" aria-label="Ajustes: proveedor de LLM y API">

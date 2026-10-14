@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     embedding_passage_prefix: str = "passage: "
     embedding_batch_size: int = 32
     embedding_device: str = "cpu"  # "cuda" si hay GPU y torch con CUDA
+    embedding_allow_external: bool = False  # consentimiento para un Ollama remoto del perfil «entorno» (envía el texto de los documentos)
+    embedding_timeout_s: float = 120.0
 
     # --- OCR ---
     ocr_enabled: bool = True

@@ -56,7 +56,16 @@ export interface Health {
   ok: boolean;
   database: { ok: boolean };
   pgvector: { ok: boolean; version?: string };
-  embeddings: { provider: string; model: string };
+  embeddings: {
+    ok: boolean;
+    provider: string | null;
+    model: string | null;
+    external: boolean | null;
+    dimension?: number | null;
+    documents_total?: number;
+    documents_indexed?: number;
+    detail?: string;
+  };
   generation: { ok: boolean; provider?: string; model?: string; external?: boolean; detail?: string };
 }
 
@@ -118,11 +127,108 @@ export interface LlmProfileInput {
   allow_external?: boolean;
 }
 
+export type EmbedKind = "sentence-transformers" | "ollama" | "openai-compatible";
+
+export interface EmbedProfile {
+  id: string;
+  name: string;
+  kind: EmbedKind;
+  base_url: string;
+  model: string;
+  has_key: boolean;
+  key_hint: string | null;
+  key_error: boolean;
+  allow_external: boolean;
+  external: boolean;
+  editable: boolean;
+  active: boolean;
+  query_prefix: string;
+  passage_prefix: string;
+  dimensions: number | null;
+  /** Umbral coseno de relevancia propio de este modelo (null = el global del servidor). */
+  min_similarity: number | null;
+}
+
+export interface EmbedPreset {
+  id: string;
+  label: string;
+  kind: Exclude<EmbedKind, "sentence-transformers">;
+  base_url: string;
+  model: string;
+  query_prefix: string;
+  passage_prefix: string;
+  dimensions: number | null;
+  min_similarity: number | null;
+  needs_key: boolean;
+  key_url: string | null;
+  note: string;
+}
+
+export interface EmbedModelUsage {
+  id: number;
+  provider: string;
+  name: string;
+  dimension: number;
+  vectors: number;
+  active: boolean;
+}
+
+export interface EmbedSettings {
+  active: string;
+  profiles: EmbedProfile[];
+  presets: EmbedPreset[];
+  models: EmbedModelUsage[];
+  coverage: { documents_total: number; documents_indexed: number };
+}
+
+export interface EmbedPreview {
+  name: string;
+  kind: EmbedKind;
+  model: string;
+  host: string;
+  external: boolean;
+  allow_external: boolean;
+  documents_total: number;
+  documents_to_index: number;
+  already_indexed: number;
+  chunks_to_index: number;
+  chars_to_send: number;
+}
+
+export interface EmbedActivation {
+  documents: number;
+  already_indexed: number;
+  queued: number;
+  model: string;
+  dimension: number;
+}
+
+export interface EmbedTestResult {
+  ok: boolean;
+  detail: string;
+  dimension: number | null;
+  latency_ms: number | null;
+}
+
+export interface EmbedProfileInput {
+  name: string;
+  kind: Exclude<EmbedKind, "sentence-transformers">;
+  base_url: string;
+  model: string;
+  api_key?: string | null;
+  clear_api_key?: boolean;
+  allow_external?: boolean;
+  query_prefix?: string;
+  passage_prefix?: string;
+  dimensions?: number | null;
+  min_similarity?: number | null;
+}
+
 /** Réplica de la regla del servidor solo para decidir si mostrar el aviso de consentimiento (el servidor es quien decide). */
 export function isLocalUrl(url: string): boolean {
   try {
     const h = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    if (["localhost", "127.0.0.1", "::1", "host.docker.internal", "ollama", "db"].includes(h) || h.endsWith(".localhost")) return true;
+    if (["localhost", "127.0.0.1", "::1", "host.docker.internal", "ollama", "embedder", "db"].includes(h) || h.endsWith(".localhost")) return true;
     const m = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
     if (m) {
       const a = +m[1], b = +m[2];
@@ -195,6 +301,17 @@ export const api = {
   setActiveLlm: (profile_id: string) => req<LlmSettings>("/settings/llm/active", json("PUT", { profile_id })),
   testLlm: (body: { profile_id?: string | null; kind?: LlmKind; base_url?: string; api_key?: string | null }) =>
     req<LlmTestResult>("/settings/llm/test", json("POST", body)),
+  embedSettings: () => req<EmbedSettings>("/settings/embeddings"),
+  createEmbedProfile: (body: EmbedProfileInput) => req<EmbedSettings>("/settings/embeddings/profiles", json("POST", body)),
+  updateEmbedProfile: (id: string, body: Partial<EmbedProfileInput>) =>
+    req<EmbedSettings>(`/settings/embeddings/profiles/${id}`, json("PATCH", body)),
+  deleteEmbedProfile: (id: string) => req<EmbedSettings>(`/settings/embeddings/profiles/${id}`, { method: "DELETE" }),
+  previewEmbed: (profile_id: string) => req<EmbedPreview>("/settings/embeddings/preview", json("POST", { profile_id })),
+  activateEmbed: (profile_id: string) =>
+    req<EmbedSettings & { activation: EmbedActivation }>("/settings/embeddings/active", json("PUT", { profile_id })),
+  testEmbed: (body: { profile_id?: string | null; kind?: string; base_url?: string; model?: string; api_key?: string | null; query_prefix?: string; dimensions?: number | null }) =>
+    req<EmbedTestResult>("/settings/embeddings/test", json("POST", body)),
+  purgeEmbedModel: (id: number) => req<EmbedSettings>(`/settings/embeddings/models/${id}/vectors`, { method: "DELETE" }),
   ask: (id: string, question: string, documentIds: string[], collectionId: string | null) =>
     req<Message>(`/conversations/${id}/messages`, json("POST", {
       question,

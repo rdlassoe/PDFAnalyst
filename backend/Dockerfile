@@ -21,6 +21,10 @@ deps = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
 subprocess.check_call([sys.executable, "-m", "pip", "install", *deps])
 PY
 
+# torchvision (CPU, misma versión que torch): el procesador multimodal de EmbeddingGemma 2 lo importa aunque se use solo texto; sin él el modelo no carga.
+# Va en su propia capa para no invalidar la caché de torch y de las dependencias.
+RUN pip install torchvision --index-url https://download.pytorch.org/whl/cpu
+
 ARG WITH_DEV=false
 RUN if [ "$WITH_DEV" = "true" ]; then pip install "pytest>=8.2"; fi
 

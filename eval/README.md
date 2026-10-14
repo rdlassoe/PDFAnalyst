@@ -2,7 +2,9 @@
 
 `python -m app.evaluate eval/questions.jsonl` mide, sobre los documentos **ya cargados** en la aplicación, la calidad de la
 recuperación en tres modos (vector / texto completo / híbrido): recall@1/3/k, MRR, tasa de respuesta y de abstención
-correcta, y sugiere un umbral `RETRIEVAL_MIN_SIMILARITY` a partir de la separación entre preguntas con y sin respuesta.
+correcta, y sugiere un umbral de similitud a partir de la separación entre preguntas con y sin respuesta. **Cada modelo de embeddings necesita su propio umbral**
+(la escala de similitudes cambia de un modelo a otro): ejecute la evaluación con el modelo activo y fije el resultado en el perfil de Ajustes (campo «Umbral de similitud»);
+`RETRIEVAL_MIN_SIMILARITY` es solo el valor por defecto de los perfiles que no lo definen. Para comparar modelos, repita la evaluación tras cambiar de modelo (los vectores de cada uno se conservan).
 
 Formato (una línea JSON por pregunta):
 

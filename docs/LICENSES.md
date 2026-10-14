@@ -29,6 +29,9 @@ por `pypdf` (BSD-3, ya incluido como respaldo) + `pdfminer.six` (MIT), perdiendo
 | Pillow | MIT-CMU (HPND) | metadatos |
 | sentence-transformers | Apache-2.0 | metadatos |
 | PyTorch (CPU) | BSD-3 y otras permisivas (Apache-2.0, etc.) | metadatos |
+| torchvision (CPU; lo importa el procesador de EmbeddingGemma 2) | BSD | metadatos |
+| transformers · huggingface_hub (descarga del modelo) | Apache-2.0 | metadatos |
+| uvicorn (servicio `embedder`) | BSD-3-Clause | metadatos |
 | NumPy | BSD-3-Clause (+ 0BSD, MIT, Zlib, CC0 en componentes) | metadatos |
 | httpx | BSD-3-Clause | metadatos |
 | cryptography (cifrado de claves) | Apache-2.0 OR BSD-3-Clause | metadatos |
@@ -61,9 +64,10 @@ por `pypdf` (BSD-3, ya incluido como respaldo) + `pdfminer.six` (MIT), perdiendo
 |--------|-----|-----------------------|--------|
 | `intfloat/multilingual-e5-small` | Embeddings (por defecto) | MIT | ficha |
 | `qwen3:8b` (Ollama) | Generación (por defecto) | Apache-2.0 | paquete |
+| `google/embeddinggemma-2` | Embeddings (opcional, local, servicio `embedder`) | Apache-2.0 según los metadatos de la ficha de Hugging Face (el repositorio no incluye un archivo LICENSE y su README enlaza una página de licencia de Google: **léala antes de redistribuir los pesos**) | ficha |
 
 Condiciones de uso/redistribución: ambos permiten uso comercial y redistribución con aviso de licencia. **No** hay
-dependencia obligatoria de servicios de pago: los dos modelos se ejecutan localmente.
+dependencia obligatoria de servicios de pago: los modelos se ejecutan localmente (EmbeddingGemma 2 es opcional y también local; requiere descargar ≈1,5 GB de Hugging Face la primera vez).
 
 ### Modelos que NO deben asumirse como "open source"
 

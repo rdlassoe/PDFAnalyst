@@ -259,7 +259,7 @@ def retrieve(
 ) -> RetrievalResult:
     """`mode`: "vector" | "fts" | "hybrid" (anula `hybrid`; "fts" y los otros dos sirven para evaluación)."""
     s = get_settings()
-    embedder = embedder or get_embedder()
+    embedder = embedder or get_embedder(session)
     top_k = top_k or s.retrieval_top_k
     if mode is None:
         mode = "hybrid" if (s.hybrid_enabled if hybrid is None else hybrid) else "vector"
@@ -284,9 +284,11 @@ def retrieve(
     fused = rrf_fuse([b for b, on in ((vec_hits, use_vec), (fts_hits, use_fts)) if on], s.rrf_k)
     considered = len(fused)
 
+    # Cada modelo reparte sus similitudes de forma distinta (e5 las comprime hacia 0,8): el umbral puede ser propio del perfil.
+    min_sim = embedder.min_similarity if embedder.min_similarity is not None else s.retrieval_min_similarity
     kept: list[Hit] = []
     for h in fused:
-        if use_vec and h.similarity is not None and h.similarity >= s.retrieval_min_similarity:
+        if use_vec and h.similarity is not None and h.similarity >= min_sim:
             h.relevant_by.append("similarity")
         if use_fts and h.fts_rank is not None and h.coverage >= s.retrieval_fts_min_coverage:
             h.relevant_by.append("keywords")
