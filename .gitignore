@@ -1,10 +1,45 @@
+# Secretos y configuración local (solo .env.example se versiona)
 .env
+.env.*
+!.env.example
+secret.key
+*.pem
+*.key
+
+# Datos de ejecución, copias de seguridad y documentos del usuario
 data/
 backups/
+PDFs/
+*.dump
+*.sql.gz
+
+# Python
 __pycache__/
 *.pyc
 .venv/
+venv/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Node / Next.js
 node_modules/
 .next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+
+# Salidas temporales (logs, resultados sueltos de evaluación)
 *.log
+eval/_*.json
+
+# Editor / sistema operativo / herramientas locales
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.claude/
