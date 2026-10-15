@@ -2,7 +2,7 @@
 
 Plataforma de código abierto para consultar documentos PDF en lenguaje natural, con respuestas respaldadas por
 **citas verificadas** (documento + página + fragmento exacto). Funciona 100 % en local: PostgreSQL + pgvector,
-embeddings con sentence-transformers y generación con Ollama. Los proveedores externos son opcionales.
+embeddings con sentence-transformers (e5 por defecto, o **EmbeddingGemma 2 en local**) y generación con Ollama. Los proveedores externos son opcionales.
 
 ## Documentación
 
@@ -25,21 +25,21 @@ PDFAnalyst/
 │   ├── app/services/        #   ingestion, pdf_extract, chunking, embeddings, retrieval, answering,
 │   │                        #   citations, llm_settings, embedding_settings, credentials, net_validation, vector_index, storage
 │   ├── app/providers/       #   LLMProvider: ollama, openai_compat (+ ProviderConfig)
-│   ├── app/{models,config,db,worker,cli,evaluate}.py
-│   ├── alembic/versions/    #   0001 esquema inicial · 0002 ajustes de LLM · 0003 ajustes de embeddings
+│   ├── app/{models,config,db,worker,cli,evaluate,embedding_server}.py   # embedding_server = servicio local de embeddings
+│   ├── alembic/versions/    #   0001 esquema inicial · 0002 ajustes de LLM · 0003 ajustes de embeddings · 0004 umbral por modelo
 │   └── tests/               #   240 pruebas (pytest)
 ├── frontend/                # Next.js 15 + React 19 + Tailwind (app/, components/, lib/)
 ├── eval/                    # preguntas de evaluación, e2e.py, RESULTS.md
 ├── scripts/                 # backup / restore (.sh y .ps1)
 ├── docs/                    # documentación
-├── docker-compose.yml       # db, migrate, api, worker, frontend (+ ollama opcional, + test)
+├── docker-compose.yml       # db, migrate, api, worker, embedder, frontend (+ ollama opcional, + test)
 └── .env.example             # configuración documentada
 ```
 
 ## Requisitos
 
 - Docker (Engine o Desktop) con Compose v2.
-- ~8 GB de RAM libres; GPU NVIDIA opcional (recomendada para el modelo de generación).
+- ~8 GB de RAM libres (el servicio `embedder` con EmbeddingGemma 2 añade ≈1,9 GB; es opcional y se puede parar); GPU NVIDIA opcional (recomendada para el modelo de generación).
 - Un modelo de Ollama (por defecto `qwen3:8b`, Apache-2.0).
 
 ## Puesta en marcha
@@ -224,7 +224,8 @@ Verificado en esta máquina (Windows 11 + Docker Desktop + RTX 4050), con el sta
   textual e híbrida, abstención, citas inventadas, inyección en documentos, API, seguridad de rutas, proveedores).
 - Flujo completo en la interfaz: subir PDF → procesar → preguntar a `qwen3:8b` → cita → visor PDF en la página con el
   fragmento resaltado. Copia de seguridad y restauración (BD + embeddings + PDF) probadas.
-- Módulo de embeddings verificado en el navegador contra el servidor de desarrollo: probar, consentimiento, vista previa (274 fragmentos, ≈238 mil caracteres), reindexado en ~15 s, búsqueda y chat con el modelo nuevo, vuelta inmediata al modelo local, borrado de vectores.
+- **EmbeddingGemma 2 en local** verificado de extremo a extremo (indexación, evaluación frente a e5, 15/15 y 7/7 con el LLM real, interfaz): ver «Modelo de embeddings» y `eval/RESULTS.md`.
+- Módulo de embeddings por API verificado en el navegador contra el servidor de desarrollo: probar, consentimiento, vista previa (274 fragmentos, ≈238 mil caracteres), reindexado en ~15 s, búsqueda y chat con el modelo nuevo, vuelta inmediata al modelo local, borrado de vectores.
 - Interfaz verificada a mano en el navegador: notificaciones flotantes, eliminación de conversaciones con «Deshacer» (comprobada contra
   la API en ambos caminos), subida de duplicado/no-PDF/PDF corrupto, Ajustes (probar, cargar modelos, consentimiento externo), vista móvil.
 - Evaluación con un libro real de 121 páginas: 15/15 respuestas con cita correcta y 7/7 abstenciones (`eval/RESULTS.md`).
