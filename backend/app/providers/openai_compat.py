@@ -7,6 +7,8 @@ La clave llega ya descifrada en `ProviderConfig` (en memoria); nunca se registra
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from .base import ChatMessage, LLMError, LLMProvider, LLMRateLimited, ProviderConfig, check_external_allowed, is_local_url  # noqa: F401
@@ -32,6 +34,20 @@ class OpenAICompatProvider(LLMProvider):
     def _client(self) -> httpx.Client:
         return httpx.Client(timeout=self._timeout, transport=self._transport, headers=self._headers())
 
+    def _provider_says(self, r: httpx.Response) -> str:
+        """Lo que responde el proveedor (su mensaje de error), recortado y sin la clave, para que el aviso diga la causa real."""
+        try:
+            body = r.json()
+            body = body[0] if isinstance(body, list) and body else body
+            err = body.get("error", body) if isinstance(body, dict) else body
+            msg = err.get("message", "") if isinstance(err, dict) else str(err)
+        except Exception:  # noqa: BLE001
+            return ""
+        msg = re.sub(r"\s+", " ", str(msg)).strip()
+        if self._key:
+            msg = msg.replace(self._key, "***")
+        return f" — el proveedor dice: «{msg[:240]}»" if msg else ""
+
     @staticmethod
     def _message(m: ChatMessage) -> dict:
         if not m.images:
@@ -51,10 +67,12 @@ class OpenAICompatProvider(LLMProvider):
         try:
             with self._client() as c:
                 r = c.post(f"{self._base}/chat/completions", json=payload)
-            if r.status_code in (401, 403):
-                raise LLMError("El proveedor rechazó las credenciales (revise LLM_API_KEY)")
+            if r.status_code == 401:
+                raise LLMError("El proveedor rechazó las credenciales (revise la clave API)" + self._provider_says(r))
+            if r.status_code == 403:  # p. ej. Gemini: «Your project has been denied access» (la clave autentica, pero el proyecto no tiene permiso)
+                raise LLMError("El proveedor denegó el acceso (403): las credenciales no tienen permiso o la cuenta/proyecto está restringido" + self._provider_says(r))
             if r.status_code == 404:
-                raise LLMError(f"Modelo o ruta no encontrados en el proveedor (modelo '{self.model}')")
+                raise LLMError(f"Modelo o ruta no encontrados en el proveedor (modelo '{self.model}')" + self._provider_says(r))
             if r.status_code == 429:
                 try:
                     wait = float(r.headers.get("retry-after", ""))

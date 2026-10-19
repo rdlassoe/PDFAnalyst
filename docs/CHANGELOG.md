@@ -141,6 +141,12 @@ El usuario aclaró que el sistema recibe únicamente PDF y que sus imágenes deb
   `RETRIEVAL_MIN_SIMILARITY` en `.env` no tenía efecto). Verificado con un override real. Referencia en OPERATIONS §10.
 - Documentación reescrita donde estaba obsoleta: modelo de datos, pipelines, abstención, FTS, licencias de modelos, estado por fase.
 
+## Gemini real en visión (2026-10-19): hallazgos
+
+Primera prueba con una clave real de Gemini (perfil del usuario, solo lectura/prueba, sin activarlo): la clave **autentica** (lista 63 modelos) pero **la generación falla**: `gemini-2.5-flash` (el modelo que sugería nuestra plantilla) responde 404 «ya no está disponible para usuarios nuevos» y los modelos actuales (`gemini-3.8-flash`, `3.5-flash`, `3.5-flash-lite`, `3.1-flash-lite`) responden **403 «Your project has been denied access»**: el proyecto de Google de esa clave no tiene permiso para generar (restricción de Google; no se puede arreglar desde el código).
+Correcciones nuestras: la plantilla ya sugiere `gemini-3.8-flash` y advierte de ambos casos; los errores del proveedor (401/403/404) muestran ahora **lo que dice el proveedor** (recortado y con la clave enmascarada) en lugar de «credenciales rechazadas» genérico (3 pruebas nuevas, 362 en total). **Gemini sigue sin verificarse de extremo a extremo** (Groq sí).
+Aparte: el test con Ollama real falló una vez de forma transitoria (carga del modelo en la GPU) y pasó al repetirlo.
+
 ## Documentación: auditoría completa (2026-10-19)
 
 Revisión de toda la documentación tras la ampliación de figuras: decisiones D1–D21 en orden, pipelines de ingesta y consulta con las figuras, modelo de datos y API, seguridad (imágenes a servicios externos), README (PDF como entrada principal, requisitos, estado), OPERATIONS §14 reescrita, FRONTEND (componentes y lista de verificación), LICENSES (modelos de visión como servicios) y el plan multimodal (alcance real). Comprobación mecánica de la configuración: **`RETRIEVAL_MIN_SIMILARITY_MEDIA` estaba documentada pero el compose no la pasaba al contenedor** (corregido), y `WORKER_POLL_SECONDS`/`JOB_STALE_MINUTES` no estaban documentadas ni en el compose (añadidas).

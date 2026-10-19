@@ -198,7 +198,7 @@ El sistema recibe **PDF**, y un PDF puede contener imágenes: fotos, esquemas, g
 Verificado de extremo a extremo (con **Groq `qwen/qwen3.8-27b`** y EmbeddingGemma 2 local, un PDF sintético de 2 páginas con un gráfico de barras y una foto): 2 figuras detectadas y descritas en 33 s; la pregunta «¿qué muestra el
 gráfico y qué trimestre tuvo más ventas?» se respondió **mirando la imagen** («Q3, con 420»), con citas al texto del PDF y a la figura; una consulta ajena no devolvió nada. 359 pruebas automáticas. Análisis de PDF reales
 (solo lectura): `Analitica Prescriptiva.pdf` son 12 diapositivas que son una imagen por página; `Parcial 3 - Sol Telco.pdf`, `manual-cassandra.pdf` y `book-attachment` tienen figuras y gráficos vectoriales.
-**No verificado:** la calidad de las descripciones con tus documentos reales, Gemini real (no se probó; Groq sí), y que los umbrales de detección (tamaño, repetición, trazos vectoriales) sean los óptimos para todos los tipos de PDF
+**No verificado:** la calidad de las descripciones con tus documentos reales, Gemini real (se probó una clave real: lista modelos pero Google devolvió 403 «Your project has been denied access» al generar, una restricción del proyecto de esa clave; Groq sí funciona), y que los umbrales de detección (tamaño, repetición, trazos vectoriales) sean los óptimos para todos los tipos de PDF
 (se pueden ajustar: `PDF_FIGURE_*` y `PDF_VECTOR_*`). Audio y vídeo no se implementan: el sistema solo recibe PDF ([docs/plans/PLAN_MULTIMODAL.md](docs/plans/PLAN_MULTIMODAL.md)).
 
 ## Configuración

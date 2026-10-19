@@ -295,10 +295,12 @@ Un PDF cuyas páginas son todas imágenes y sin OCR no falla: se indexa por sus 
 
 ### 14.2 Modelo de visión (Ajustes → Modelo de visión)
 
-Desactivado por defecto. Plantillas: **Google Gemini** (`https://generativelanguage.googleapis.com/v1beta/openai`, p. ej. `gemini-2.5-flash`), **Groq** (elija un modelo con visión en «Cargar modelos»; Groq no indica si está en el plan gratuito) y **Ollama local** (`ollama pull qwen3-vl:4b`, ≈3,3 GB,
+Desactivado por defecto. Plantillas: **Google Gemini** (`https://generativelanguage.googleapis.com/v1beta/openai`, p. ej. `gemini-3.8-flash`; **`gemini-2.5-flash` ya no está disponible para cuentas nuevas**), **Groq** (elija un modelo con visión en «Cargar modelos»; Groq no indica si está en el plan gratuito) y **Ollama local** (`ollama pull qwen3-vl:4b`, ≈3,3 GB,
 o `qwen3-vl:2b`, ≈1,9 GB; la GPU se comparte con el LLM de chat). Pasos: *Añadir modelo de visión* → clave API → *Cargar modelos* → elegir uno con visión → marcar *«Permitir el envío de las imágenes»* (servicios externos) → *Probar con una imagen de prueba* → *Usar para describir*.
 
 **Privacidad:** con un servicio externo las imágenes salen de la máquina (reducidas a `VISION_MAX_SIDE` y sin EXIF); con «Responder mirando las figuras» (activado por defecto) también la pregunta y los fragmentos recuperados. En la capa gratuita de Gemini el contenido puede usarse para mejorar los productos de Google. Retirar el permiso desactiva el modelo al instante.
+
+**Gemini: «Your project has been denied access» (403).** La clave autentica (por eso «Cargar modelos» funciona) pero el proyecto de Google detrás de ella no tiene permiso para generar contenido: es una restricción del lado de Google, no de PDF Analyst. Cree otra clave en un **proyecto nuevo** en https://aistudio.google.com/apikey o revise el estado del proyecto/cuenta (región, facturación). «Probar con una imagen de prueba» muestra ahora el mensaje exacto del proveedor.
 
 ### 14.3 Encontrar figuras por texto (vectores de imagen)
 

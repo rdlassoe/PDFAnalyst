@@ -28,10 +28,11 @@ KINDS = ("ollama", "openai-compatible")
 # Plantillas. Las URL son las publicadas por cada proveedor; los modelos son SUGERENCIAS (cambian con frecuencia): use «Cargar modelos» y verifique en su documentación.
 PRESETS = [
     {"id": "gemini-vision", "label": "Google Gemini API", "kind": "openai-compatible",
-     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-2.5-flash",
+     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-3.8-flash",
      "needs_key": True, "key_url": "https://aistudio.google.com/apikey",
      "note": "Servicio EXTERNO: cada imagen se envía a Google. Tiene capa gratuita con límites por minuto y por día; en ella, según la página de precios de Google, "
-             "el contenido puede usarse para mejorar sus productos (no en la de pago): no la use con imágenes privadas."},
+             "el contenido puede usarse para mejorar sus productos (no en la de pago): no la use con imágenes privadas. Los modelos cambian: `gemini-2.5-flash` ya no está disponible para cuentas nuevas; "
+             "elija uno de «Cargar modelos». Si Google responde «Your project has been denied access», el proyecto de su clave no tiene permiso para generar (cree otra clave en un proyecto nuevo o revise el estado del proyecto)."},
     {"id": "groq-vision", "label": "Groq", "kind": "openai-compatible", "base_url": "https://api.groq.com/openai/v1", "model": "",
      "needs_key": True, "key_url": "https://console.groq.com/keys",
      "note": "Servicio EXTERNO: cada imagen se envía a Groq. Elija un modelo con visión en «Cargar modelos» (la documentación de Groq lista cuáles admiten imágenes y "

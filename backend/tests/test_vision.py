@@ -104,6 +104,7 @@ def test_default_view_is_disabled_and_has_gemini_groq_ollama_presets(client):
     ids = {p["id"]: p for p in v["presets"]}
     assert {"gemini-vision", "groq-vision", "ollama-vision", "custom-vision"} <= set(ids)
     assert ids["gemini-vision"]["base_url"] == GEMINI and ids["groq-vision"]["base_url"] == GROQ and ids["ollama-vision"]["kind"] == "ollama"
+    assert ids["gemini-vision"]["model"] != "gemini-2.5-flash"  # retirado para cuentas nuevas (verificado con una cuenta real)
     assert "mejorar sus productos" in ids["gemini-vision"]["note"] and "EXTERNO" in ids["groq-vision"]["note"]
 
 
@@ -343,3 +344,33 @@ def test_test_image_helper_produces_a_valid_known_image():
     im = Image.open(io.BytesIO(vision.test_image_bytes()))
     assert im.size == (256, 192) and im.getpixel((128, 96))[0] > 200 and im.getpixel((5, 5)) == (255, 255, 255)
     assert vision_settings.NONE_ID == "none"
+
+
+# ---------------------------------------------------------------- mensajes de error: la causa real que dice el proveedor (caso real de Gemini)
+@pytest.mark.parametrize(
+    "status, body, must_have",
+    [
+        (404, [{"error": {"code": 404, "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash"}}],
+         ["no encontrados", "no longer available to new users", "gemini-3.8-flash"]),
+        (403, [{"error": {"code": 403, "message": "Your project has been denied access. Please contact support.", "status": "PERMISSION_DENIED"}}],
+         ["denegó el acceso (403)", "credenciales", "Your project has been denied access"]),
+        (401, {"error": {"message": "Invalid API key provided: AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12345"}}, ["rechazó las credenciales", "Invalid API key"]),
+    ],
+)
+def test_provider_error_messages_include_what_the_provider_says_and_never_the_key(status, body, must_have):
+    p = OpenAICompatProvider(ProviderConfig(kind="openai-compatible", base_url="http://localhost:9/v1", model="m", api_key=KEY),
+                             httpx.MockTransport(lambda r: httpx.Response(status, json=body)))
+    with pytest.raises(LLMError) as e:
+        p.chat([ChatMessage("user", "x")], temperature=0, max_tokens=5)
+    msg = str(e.value)
+    assert all(frag in msg for frag in must_have), msg
+    assert KEY not in msg  # si el proveedor repite la clave en su mensaje, se enmascara
+
+
+def test_non_json_error_bodies_do_not_break_the_message():
+    p = OpenAICompatProvider(ProviderConfig(kind="openai-compatible", base_url="http://localhost:9/v1", model="m", api_key=KEY),
+                             httpx.MockTransport(lambda r: httpx.Response(403, text=KEY + " <html>prohibido</html>")))
+    with pytest.raises(LLMError) as e:
+        p.chat([ChatMessage("user", "x")], temperature=0, max_tokens=5)
+    assert "denegó el acceso" in str(e.value) and KEY not in str(e.value) and "<html>" not in str(e.value)
+
