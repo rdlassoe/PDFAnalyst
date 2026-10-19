@@ -27,3 +27,5 @@ comprobar que el arnés funciona. **No sustituye** la evaluación con documentos
 umbral de abstención de verdad.
 
 Resultados sobre un documento real y análisis: [RESULTS.md](RESULTS.md) (`questions.babilonia.jsonl`, `e2e.py`).
+
+**Figuras de PDF:** esta evaluación mide la recuperación de **texto**. Aún no hay un conjunto de preguntas sobre el contenido de figuras (gráficos, diapositivas-imagen, fotos): para crearlo, añada al JSONL preguntas cuya respuesta solo esté en una figura (con `pages` = la página de la figura) y ejecútelas con un modelo de visión activo; las figuras se recuperan como fragmentos de descripción/OCR/medio de esa página. Pendiente (docs/CHANGELOG.md).

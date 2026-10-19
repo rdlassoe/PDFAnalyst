@@ -29,6 +29,8 @@ se ejecuta en local.)
 | Dependencias | transformers 5.19 + sentence-transformers 6.1; **requiere `torchvision`** incluso en modo solo texto (su procesador lo importa) |
 | Ollama | **No sirve aquí:** las compilaciones de `embeddinggemma-2` exigen MLX (solo Apple Silicon); se probaron dos etiquetas |
 
+> **Ampliación posterior:** el mismo servicio `embedder` también vectoriza las **figuras de los PDF** (modo imagen, ≈3,0 GB de RAM mientras indexa; vuelve a solo texto tras 300 s). Medidas, decisiones y alcance final en [PLAN_MULTIMODAL.md](PLAN_MULTIMODAL.md) y ARCHITECTURE D19–D21.
+
 ## 3. Qué se implementó
 
 Detalle técnico en [ARCHITECTURE.md](../ARCHITECTURE.md) (D17 y D18), [OPERATIONS.md §13](../OPERATIONS.md) y el README.

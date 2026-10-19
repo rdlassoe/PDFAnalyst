@@ -1,7 +1,7 @@
 # Historial de cambios
 
 Cronología de lo construido y, sobre todo, de **lo que se descubrió al verificar** (varias decisiones de diseño cambiaron por datos
-reales). Fecha de referencia: 2026-10-14. Las decisiones numeradas (D1–D18) están en [ARCHITECTURE.md](ARCHITECTURE.md).
+reales). Fecha de referencia: 2026-10-19. Las decisiones numeradas (D1–D18) están en [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Fase 1–5 — núcleo RAG local
 
@@ -107,7 +107,7 @@ El usuario corrigió la decisión anterior: EmbeddingGemma 2 debe ejecutarse **l
 
 ## Imágenes y modelo de visión (Fases 0–2 del plan multimodal)
 
-Decisiones del usuario: orden imágenes → audio → vídeo; añadir Whisper; el sistema debe **decir qué ve** en las imágenes; modelo de visión por API con **Gemini y Groq**, configurables desde Ajustes. (Audio, vídeo y Whisper aún sin implementar.)
+Decisiones del usuario: orden imágenes → audio → vídeo; añadir Whisper; el sistema debe **decir qué ve** en las imágenes; modelo de visión por API con **Gemini y Groq**, configurables desde Ajustes. **Audio, vídeo y Whisper se descartaron después** (el usuario aclaró que el sistema solo recibe PDF: ver la sección siguiente); lo construido aquí es la base de las figuras de PDF. El servicio `embedder` conserva la capacidad de audio, sin uso.
 
 - **Fase 0 (medido en esta máquina, CPU, fp32):** el vector de texto es idéntico con y sin los codificadores de visión/audio (coseno ≥ 0,9999: los vectores de texto existentes siguen valiendo); memoria pico solo texto 2,0 GB · +imagen 3,0 · +audio 3,7 · completo 4,7;
   imagen 3,3 s (280 tokens) / 1,5 s (140) / 0,7 s (70); audio de 30 s en 2,4 s; vídeo 1,5 s por fotograma. **bfloat16 es 3–7× más lento** en esta CPU (sin AVX-512/AMX): se usa float32.
@@ -141,8 +141,13 @@ El usuario aclaró que el sistema recibe únicamente PDF y que sus imágenes deb
   `RETRIEVAL_MIN_SIMILARITY` en `.env` no tenía efecto). Verificado con un override real. Referencia en OPERATIONS §10.
 - Documentación reescrita donde estaba obsoleta: modelo de datos, pipelines, abstención, FTS, licencias de modelos, estado por fase.
 
+## Documentación: auditoría completa (2026-10-19)
+
+Revisión de toda la documentación tras la ampliación de figuras: decisiones D1–D21 en orden, pipelines de ingesta y consulta con las figuras, modelo de datos y API, seguridad (imágenes a servicios externos), README (PDF como entrada principal, requisitos, estado), OPERATIONS §14 reescrita, FRONTEND (componentes y lista de verificación), LICENSES (modelos de visión como servicios) y el plan multimodal (alcance real). Comprobación mecánica de la configuración: **`RETRIEVAL_MIN_SIMILARITY_MEDIA` estaba documentada pero el compose no la pasaba al contenedor** (corregido), y `WORKER_POLL_SECONDS`/`JOB_STALE_MINUTES` no estaban documentadas ni en el compose (añadidas).
+
 ## Pendiente conocido
 
+- **Figuras de PDF:** probar con los PDF reales del usuario y medir la calidad de las descripciones y el tiempo con muchas figuras; ajustar los umbrales de detección con más tipos de PDF; probar Gemini real; evaluar preguntas sobre figuras con un conjunto propio (`eval/`); vector por página completa (tablas y gráficos que el texto no capta).
 - Repetir la evaluación A/B de EmbeddingGemma 2 frente a e5 con más documentos y preguntas de usuarios reales; medir `bfloat16` y la indexación de colecciones grandes.
 - Evaluar con más documentos reales (técnicos/legales, con tablas) y preguntas de usuarios reales.
 - Rendimiento a escala (> 50 000 fragmentos) y recall de HNSW.

@@ -78,10 +78,10 @@ buscar; el sistema rechaza (409) una activación con prefijos o dimensión disti
 ```
 
 La copia contiene `db.dump` (`pg_dump -Fc`: documentos, fragmentos, **embeddings**, conversaciones, citas) y
-`storage.tgz` (PDF originales). La restauración es destructiva y pide confirmación; se recomienda probarla periódicamente
+`storage.tgz` (PDF originales y las figuras extraídas de ellos, `figures/`, y las miniaturas). La restauración es destructiva y pide confirmación; se recomienda probarla periódicamente
 en otro entorno. Los modelos descargados (volumen `appdata`, carpeta `models`) no se incluyen: se vuelven a descargar.
 
-`db.dump` incluye los perfiles de proveedor LLM con sus claves **cifradas**; la clave maestra (`/data/secret.key` o `APP_SECRET_KEY`)
+`db.dump` incluye los perfiles de proveedor (LLM, embeddings y modelo de visión) con sus claves **cifradas**; la clave maestra (`/data/secret.key` o `APP_SECRET_KEY`)
 **no** se copia a propósito (§7): tras restaurar en otro entorno, las claves guardadas aparecerán como «Clave ilegible» en Ajustes y
 bastará con volver a introducirlas. Si desea poder restaurarlas tal cual, guarde `secret.key` aparte y por un canal seguro.
 
@@ -184,13 +184,14 @@ reprocesar (el cambio de modelo de embeddings: §4).
 | `MEDIA_MAX_IMAGE_MB` / `MEDIA_MAX_PIXELS` | `20` / `40000000` | api, worker | Tamaño máximo de una imagen y megapíxeles máximos (protege de bombas de descompresión). |
 | `MEDIA_THUMB_PX` | `320` | api, worker | Lado mayor de las miniaturas (JPEG sin EXIF). |
 | `VISION_MAX_SIDE` / `VISION_MAX_TOKENS` / `VISION_RETRIES` | `1568` / `500` / `3` | api, worker | Las imágenes se reducen a este lado mayor antes de enviarlas al modelo de visión; longitud máxima de la descripción; reintentos ante 429. |
+| `WORKER_POLL_SECONDS` / `JOB_STALE_MINUTES` | `2` / `30` | worker | Cada cuántos segundos mira la cola; minutos tras los que un trabajo «en ejecución» sin latido se da por huérfano y vuelve a la cola (la ingesta con figuras da latido en cada figura). |
 | `PDF_FIGURES_ENABLED` | `true` | api, worker | Detectar las figuras (imágenes y gráficos) de los PDF. `false` = comportamiento anterior (solo texto). |
 | `PDF_FIGURES_MAX` | `60` | api, worker | Tope de figuras por documento (las más grandes primero; se avisa de las omitidas). Cada figura cuesta OCR, vector y, con modelo de visión, una descripción. |
 | `PDF_FIGURE_MIN_PX` / `PDF_FIGURE_MIN_AREA` | `100` / `0.02` | api, worker | Una imagen incrustada se ignora si su lado menor es menor que esto o si ocupa menos de esta fracción de la página. |
 | `PDF_FIGURE_REPEAT_PAGES` | `3` | api, worker | Una imagen presente en ≥ N páginas (fondo, logo, marca de agua) se ignora. |
 | `PDF_VECTOR_MIN_PATHS` / `PDF_VECTOR_MIN_AREA` | `40` / `0.15` | api, worker | Un gráfico vectorial es una región con ≥ N trazos que cubre ≥ esta fracción de la página. |
 | `VISION_ANSWER_MAX_IMAGES` | `3` | api | Figuras que se adjuntan al modelo de visión al responder mirándolas. |
-| `RETRIEVAL_MIN_SIMILARITY_MEDIA` | `0.65` | api | Umbral coseno para imágenes/audio/vídeo (otra escala que texto→texto). Provisional: medido con imágenes sintéticas (correctas 0,74–0,84; ajenas ≤ 0,62; con una imagen real 0,73–0,74). Calibrar con imágenes reales. |
+| `RETRIEVAL_MIN_SIMILARITY_MEDIA` | `0.65` | api | Umbral coseno para figuras/imágenes (el vector de la imagen; otra escala que texto→texto). Provisional: medido con imágenes sintéticas (correctas 0,74–0,84; ajenas ≤ 0,62; con una imagen real 0,73–0,74). Calibrar con imágenes reales. |
 | `RETRIEVAL_TOP_K` / `RETRIEVAL_CANDIDATES` | `6` / `30` | api | Fragmentos que llegan al LLM / candidatos por rama. |
 | `RETRIEVAL_MIN_SIMILARITY` | `0.80` | api | Umbral coseno de relevancia por defecto (calibrado para e5, que comprime las similitudes). Un proveedor de Ajustes puede llevar el suyo (EmbeddingGemma 2: 0,72). **No separa por sí solo** preguntas con y sin respuesta con e5 (README §Estado); la abstención fiable la aporta el LLM. |
 | `RETRIEVAL_FTS_MIN_COVERAGE` | `0.5` | api | Fracción de términos distintivos de la pregunta que debe contener un fragmento. |
@@ -278,32 +279,45 @@ respuestas con cita correcta y 7/7 abstenciones. Muestra pequeña de un solo doc
 
 ## 14. Figuras de PDF y modelo de visión
 
-**Figuras dentro de un PDF (lo principal):** al procesar un PDF se detectan sus imágenes y gráficos, se leen (OCR), se describen (modelo de visión) y se vectorizan; al responder, el modelo de visión puede recibirlas (Ajustes → Modelo de visión → «Responder mirando las figuras»). Para que un PDF ya subido lea sus figuras: botón «Volver a procesar». La lista de documentos muestra «N figuras (M descritas)»; los avisos del documento indican si hubo figuras omitidas por el tope, límites de tasa del proveedor o descripciones que fallaron. Ajuste de la detección: `PDF_FIGURE_*`, `PDF_VECTOR_*`, `PDF_FIGURES_MAX` (§10). Un PDF cuyas páginas son todas imágenes y sin OCR ya no falla: se indexa por sus figuras con un aviso (sin modelo de visión no se podrá responder con su contenido).
+El sistema recibe PDF; esta sección describe cómo lee las **imágenes y gráficos** que contienen. Diseño y decisiones: ARCHITECTURE D19–D21; interfaz: FRONTEND §4.
+
+### 14.1 Qué ocurre al procesar un PDF con figuras
+
+1. Se detectan las **imágenes incrustadas** (incluida una página que es una imagen entera, como una diapositiva) y los **gráficos vectoriales** (región con ≥ `PDF_VECTOR_MIN_PATHS` trazos que cubre ≥ `PDF_VECTOR_MIN_AREA` de la página).
+   Se ignoran las imágenes pequeñas (`PDF_FIGURE_MIN_PX`, `PDF_FIGURE_MIN_AREA`), muy alargadas y las repetidas en ≥ `PDF_FIGURE_REPEAT_PAGES` páginas (fondos, logos). Tope por documento: `PDF_FIGURES_MAX` (las más grandes primero).
+2. Cada figura se renderiza tal como se ve en la página y se guarda en `<almacenamiento>/figures/<id-documento>/fNNN.jpg`.
+3. Se le hace OCR; si hay un modelo de visión activo se **describe** (una sola vez si hay imágenes idénticas); y se calcula su **vector** con EmbeddingGemma 2 (si el perfil de embeddings admite medios, §14.3).
+4. Si el proveedor de visión devuelve un límite de tasa (429) agotado, o falla 3 veces seguidas, deja de llamarlo en ese documento: las figuras restantes se indexan con vector y OCR y el documento muestra un aviso. Nunca falla la ingesta por culpa del modelo de visión.
+5. **Al responder**, si la evidencia incluye figuras y «Responder mirando las figuras» está activo, el modelo de visión recibe la pregunta, los fragmentos y hasta `VISION_ANSWER_MAX_IMAGES` imágenes. Si falla o falta consentimiento, responde el LLM de texto con las descripciones (`generation.vision_error` en los metadatos del mensaje).
+
+Un PDF subido **antes** de activar esta función (o antes de activar el modelo de visión) no tiene sus figuras: use **«Volver a procesar»** en la lista de documentos. La lista muestra «N figuras (M descritas)» y los avisos del documento indican figuras omitidas por el tope, límites del proveedor o descripciones fallidas.
+Un PDF cuyas páginas son todas imágenes y sin OCR no falla: se indexa por sus figuras con un aviso (sin modelo de visión no se podrá responder con su contenido).
+
+### 14.2 Modelo de visión (Ajustes → Modelo de visión)
+
+Desactivado por defecto. Plantillas: **Google Gemini** (`https://generativelanguage.googleapis.com/v1beta/openai`, p. ej. `gemini-2.5-flash`), **Groq** (elija un modelo con visión en «Cargar modelos»; Groq no indica si está en el plan gratuito) y **Ollama local** (`ollama pull qwen3-vl:4b`, ≈3,3 GB,
+o `qwen3-vl:2b`, ≈1,9 GB; la GPU se comparte con el LLM de chat). Pasos: *Añadir modelo de visión* → clave API → *Cargar modelos* → elegir uno con visión → marcar *«Permitir el envío de las imágenes»* (servicios externos) → *Probar con una imagen de prueba* → *Usar para describir*.
+
+**Privacidad:** con un servicio externo las imágenes salen de la máquina (reducidas a `VISION_MAX_SIDE` y sin EXIF); con «Responder mirando las figuras» (activado por defecto) también la pregunta y los fragmentos recuperados. En la capa gratuita de Gemini el contenido puede usarse para mejorar los productos de Google. Retirar el permiso desactiva el modelo al instante.
+
+### 14.3 Encontrar figuras por texto (vectores de imagen)
+
+Requiere que el perfil de embeddings activo sea el servicio local `embedder` con la casilla *«admite imágenes, audio y vídeo»* (la plantilla «EmbeddingGemma 2 (local)» la trae; en un perfil existente edítelo y márquela: no invalida vectores y rige al instante). Con otro modelo (p. ej. e5) las figuras se buscan solo por su OCR y su descripción.
+El servicio carga el codificador de imagen mientras indexa (≈3 GB de RAM, 20–30 s la primera vez) y vuelve a solo texto a los `EMBED_SERVER_MEDIA_IDLE_S` segundos sin uso. Con poca RAM libre, cierre otras aplicaciones al procesar PDF con muchas figuras. Los medios nunca se envían a un servicio de embeddings externo.
+
+### 14.4 Imágenes sueltas (secundario)
+
+Además se pueden subir imágenes sueltas (PNG, JPEG, WebP; la firma decide, SVG y GIF se rechazan; límites `MEDIA_MAX_IMAGE_MB` y `MEDIA_MAX_PIXELS`): reciben el mismo tratamiento (miniatura, OCR, descripción, vector) y tienen un visor con «¿Qué ves en esta imagen?».
+
+### 14.5 Solución de problemas
 
 | Síntoma | Causa probable / solución |
 |---------|---------------------------|
-| Un PDF con imágenes no «ve» las figuras | Se subió antes de esta función: «Volver a procesar». Si `figure_count` es 0, la imagen es pequeña, repetida en ≥ 3 páginas o el PDF no tiene imágenes (baje `PDF_FIGURE_MIN_AREA`/`PDF_FIGURE_REPEAT_PAGES` si hace falta). |
+| Un PDF con imágenes no «ve» las figuras | Se subió antes de esta función: «Volver a procesar». Si `figure_count` es 0, las imágenes son pequeñas, se repiten en ≥ 3 páginas o no hay (baje `PDF_FIGURE_MIN_AREA`/`PDF_FIGURE_REPEAT_PAGES` si hace falta). |
 | Figuras detectadas pero sin descripción | No hay modelo de visión activo, o el proveedor falló/limitó (ver avisos del documento); reprocese más tarde. |
 | Procesar un PDF con muchas figuras tarda | Cada figura hace OCR, una llamada al modelo de visión y un vector (≈3 s en CPU). Con Gemini gratuito (≈10 peticiones/min) 60 figuras tardan ≈6 min. Baje `PDF_FIGURES_MAX`. |
-| «Responder mirando» envía datos fuera | Con un modelo de visión externo, la pregunta, los fragmentos y hasta 3 figuras van a ese servicio. Desactive el interruptor para usar solo descripciones y el LLM de texto. |
-
-**Imágenes sueltas:** además se pueden subir imágenes sueltas (el sistema está pensado para PDF). **Subir imágenes:** PNG, JPEG y WebP (la firma del archivo decide, no la extensión; SVG y GIF se rechazan). Límites: `MEDIA_MAX_IMAGE_MB` y `MEDIA_MAX_PIXELS`. Cada imagen genera un fragmento de medio (vector), uno de OCR
-(si Tesseract lee texto) y, si hay modelo de visión, uno con la descripción automática.
-
-**Encontrar imágenes por texto (EmbeddingGemma 2):** el perfil de embeddings activo debe ser el servicio local `embedder` con *«admite imágenes, audio y vídeo»* marcado (la plantilla «EmbeddingGemma 2 (local)» lo trae; en un perfil
-existente, edítelo y márquelo: no invalida vectores y rige al instante). Con otro modelo (p. ej. e5) las imágenes se aceptan pero solo se buscan por su OCR/descripción. La primera imagen carga el codificador de visión (≈3 GB de
-RAM, 20–30 s); a los `EMBED_SERVER_MEDIA_IDLE_S` segundos sin uso el servicio vuelve a solo texto. Con poca RAM libre, cierre otras aplicaciones al indexar imágenes (o suba pocas a la vez).
-
-**Decir qué se ve (modelo de visión):** Ajustes → Modelo de visión. Plantillas: Google Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`, p. ej. `gemini-2.5-flash`), Groq (elija un modelo con visión en
-«Cargar modelos»; Groq no indica si está en el plan gratuito) y Ollama local (`ollama pull qwen3-vl:4b`, ≈3,3 GB, o `qwen3-vl:2b`, ≈1,9 GB). Pasos: *Añadir modelo de visión* → clave API → *Cargar modelos* → elegir uno con visión →
-marcar *«Permitir el envío de las imágenes»* (servicios externos) → *Probar con una imagen de prueba* → *Usar para describir*. Ya subidas antes de activarlo: «Reintentar»/reprocesar la imagen para generar su descripción.
-
-| Síntoma | Causa probable / solución |
-|---------|---------------------------|
-| «Probar con una imagen de prueba» dice 400/404 o devuelve un error del modelo | El modelo elegido no admite imágenes: use «Cargar modelos» y elija otro. |
-| «El proveedor limitó las peticiones (429)» | Límite de la capa gratuita (por minuto o por día). La ingesta reintenta con espera (`VISION_RETRIES`); si se agota, la imagen queda indexada sin descripción y con un aviso: reprocésela más tarde. |
-| La imagen se indexa sin descripción y con el aviso «No se pudo describir la imagen» | Fallo del proveedor o consentimiento retirado; la imagen sigue siendo buscable por su vector y su OCR. |
-| Una imagen no aparece en las búsquedas | El perfil de embeddings activo no admite medios (casilla) o aún se está indexando; compruebe `docker compose logs embedder`. |
-| El servicio `embedder` se reinicia al indexar imágenes (OOM) | Falta memoria: suba `EMBED_SERVER_MEM_LIMIT`, cierre aplicaciones o baje `EMBED_SERVER_IMAGE_TOKENS`. |
-| Gemini/Groq envían las imágenes fuera | Es lo esperado con un servicio externo: solo con el permiso marcado; en la capa gratuita de Gemini el contenido puede usarse para mejorar sus productos. |
-
+| «Probar con una imagen de prueba» da error del modelo | El modelo elegido no admite imágenes: «Cargar modelos» y elija otro. |
+| «El proveedor limitó las peticiones (429)» | Límite de la capa gratuita (por minuto o por día): la ingesta reintenta con espera (`VISION_RETRIES`) y, si se agota, indexa sin descripción y avisa. Reprocese más tarde. |
+| Una figura no aparece al buscar por su contenido visual | El perfil de embeddings activo no admite medios (casilla), o aún se indexa; compruebe `docker compose logs embedder`. |
+| El servicio `embedder` se reinicia al indexar figuras (OOM) | Falta memoria: suba `EMBED_SERVER_MEM_LIMIT`, cierre aplicaciones o baje `EMBED_SERVER_IMAGE_TOKENS`. |
+| «Responder mirando» o la descripción envían datos fuera | Es lo esperado con un servicio externo y con el permiso marcado. Desactive el interruptor para usar solo descripciones y el LLM de texto, o use un modelo de visión local. |

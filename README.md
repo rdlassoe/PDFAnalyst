@@ -8,13 +8,13 @@ embeddings con sentence-transformers (e5 por defecto, o **EmbeddingGemma 2 en lo
 
 | Documento | Contenido |
 |-----------|-----------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitectura, decisiones técnicas (D1–D17), modelo de datos, pipelines, seguridad, fases, API |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitectura, decisiones técnicas (D1–D21), modelo de datos, pipelines, seguridad, fases, API |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Operación: índices, cambio de modelo, copias de seguridad, proveedor LLM y claves, **referencia de configuración**, evaluación, solución de problemas |
 | [docs/FRONTEND.md](docs/FRONTEND.md) | Interfaz: estructura, sistema de notificaciones, pantallas, diseño adaptable, lista de verificación |
 | [docs/LICENSES.md](docs/LICENSES.md) | Licencias de dependencias y de los pesos de los modelos |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Historial de cambios y hallazgos |
 | [docs/plans/PLAN_EMBEDDINGGEMMA2.md](docs/plans/PLAN_EMBEDDINGGEMMA2.md) | EmbeddingGemma 2 **local**: datos del modelo, decisiones, medidas en este equipo y resultado de la evaluación |
-| [docs/plans/PLAN_MULTIMODAL.md](docs/plans/PLAN_MULTIMODAL.md) | Plan para indexar imágenes, audio y vídeo con EmbeddingGemma 2 (imágenes y modelo de visión implementados; audio, vídeo y PDF con figuras pendientes) |
+| [docs/plans/PLAN_MULTIMODAL.md](docs/plans/PLAN_MULTIMODAL.md) | Plan multimodal y su desenlace: el sistema **solo recibe PDF**, así que se implementaron las figuras de PDF y el modelo de visión; audio y vídeo quedaron descartados. Medidas de memoria/tiempo de EmbeddingGemma 2 multimodal |
 | [eval/README.md](eval/README.md) · [eval/RESULTS.md](eval/RESULTS.md) | Cómo evaluar con sus documentos y resultados con un libro real |
 
 ## Estructura del proyecto
@@ -22,14 +22,14 @@ embeddings con sentence-transformers (e5 por defecto, o **EmbeddingGemma 2 en lo
 ```
 PDFAnalyst/
 ├── backend/                 # API FastAPI + worker + pipeline RAG (Python 3.12)
-│   ├── app/api/             #   routers: documents, collections, chat, settings, system
-│   ├── app/services/        #   ingestion, pdf_extract, chunking, embeddings, retrieval, answering,
-│   │                        #   citations, llm_settings, embedding_settings, credentials, net_validation, vector_index, storage
-│   ├── app/providers/       #   LLMProvider: ollama, openai_compat (+ ProviderConfig)
+│   ├── app/api/             #   routers: documents, collections, chat, settings (LLM), embeddings_settings, vision_settings, system
+│   ├── app/services/        #   ingestion, pdf_extract, pdf_figures, media_ingest, chunking, embeddings, retrieval, answering, vision,
+│   │                        #   citations, llm_settings, embedding_settings, vision_settings, credentials, net_validation, vector_index, storage
+│   ├── app/providers/       #   LLMProvider: ollama, openai_compat (+ ProviderConfig; mensajes con imágenes para el modelo de visión)
 │   ├── app/{models,config,db,worker,cli,evaluate,embedding_server}.py   # embedding_server = servicio local de embeddings
 │   ├── alembic/versions/    #   0001 esquema inicial · 0002 ajustes de LLM · 0003 ajustes de embeddings · 0004 umbral por modelo · 0005 modelo de visión · 0006 medios (imágenes)
 │   └── tests/               #   359 pruebas (pytest)
-├── frontend/                # Next.js 15 + React 19 + Tailwind (app/, components/, lib/)
+├── frontend/                # Next.js 15 + React 19 + Tailwind (app/, components/: Chat, DocumentPanel, PdfViewer, ImageViewer, paneles de Ajustes…, lib/)
 ├── eval/                    # preguntas de evaluación, e2e.py, RESULTS.md
 ├── scripts/                 # backup / restore (.sh y .ps1)
 ├── docs/                    # documentación
@@ -40,8 +40,9 @@ PDFAnalyst/
 ## Requisitos
 
 - Docker (Engine o Desktop) con Compose v2.
-- ~8 GB de RAM libres (el servicio `embedder` con EmbeddingGemma 2 añade ≈1,9 GB; es opcional y se puede parar); GPU NVIDIA opcional (recomendada para el modelo de generación).
+- ~8 GB de RAM libres (el servicio `embedder` con EmbeddingGemma 2 añade ≈1,9 GB, y ≈3 GB mientras indexa figuras; es opcional y se puede parar); GPU NVIDIA opcional (recomendada para el modelo de generación).
 - Un modelo de Ollama (por defecto `qwen3:8b`, Apache-2.0).
+- Opcional, para que el sistema **vea las imágenes de los PDF**: un modelo de visión (Gemini o Groq con su clave API, o un modelo de Ollama con visión). Sin él, las figuras se indexan solo con su vector y su OCR.
 
 ## Puesta en marcha
 
@@ -67,13 +68,14 @@ La primera vez, el modelo de embeddings (`intfloat/multilingual-e5-small`, ≈12
 
 ## Uso
 
-1. Suba uno o varios PDF (el procesamiento ocurre en segundo plano; el panel muestra el estado).
+1. Suba uno o varios PDF (el procesamiento ocurre en segundo plano; el panel muestra el estado y cuántas figuras se detectaron). Si el PDF tiene imágenes o gráficos y hay un modelo de visión activo, también se leen y describen.
 2. Pregunte. Cada afirmación termina con una etiqueta `[C1]`; al pulsarla se abre el PDF en la página exacta con el
-   fragmento resaltado.
+   fragmento resaltado (o, si es una figura, con la imagen citada). Si la respuesta depende de una figura, el modelo de visión la mira al responder.
 3. Si los documentos no contienen la respuesta, el sistema lo indica y **no** invoca al modelo.
 4. Limite la consulta marcando documentos o eligiendo una colección.
 5. **Ajustes** (arriba a la derecha): elija el proveedor de LLM (Ollama por defecto, Groq, Gemini, OpenAI, otro compatible),
-   guarde su API y cámbielo cuando quiera (ver la sección siguiente).
+   guarde su API y cámbielo cuando quiera (ver la sección siguiente); el modelo de embeddings; y el **modelo de visión** (Gemini, Groq u Ollama) con el que el sistema describe y mira las imágenes de los PDF.
+   Un PDF subido antes de activar el modelo de visión se puede **volver a procesar** (botón en la lista) para que lea sus figuras.
 6. **Avisos flotantes:** la aplicación notifica subidas, fin del procesamiento de cada documento (con acción «Abrir» o
    «Reintentar»), errores del modelo, caídas y recuperación de la API. Las notificaciones se pausan al pasar el ratón y se
    pueden cerrar. Las acciones destructivas piden confirmación en un diálogo propio; **eliminar una conversación** se puede
@@ -237,7 +239,8 @@ cd ../frontend && npm install && npm run dev
   de datos; la interfaz nunca las recibe. Un servicio externo exige consentimiento explícito. Detalle en la sección «Proveedor de
   generación» y en [docs/ARCHITECTURE.md §6](docs/ARCHITECTURE.md).
 - Los PDF se guardan con nombre generado por el servidor; el nombre original solo se muestra. Se valida firma `%PDF-`,
-  tamaño y que el archivo se abra antes de aceptarlo.
+  tamaño y que el archivo se abra antes de aceptarlo. Las figuras extraídas se guardan junto al PDF con nombres generados.
+- **Las imágenes de un PDF salen de su equipo solo si activa un modelo de visión externo (Gemini, Groq…) y marca el permiso** «enviar las imágenes» (con «responder mirando», también la pregunta y los fragmentos). Retirar el permiso lo desactiva al instante. Las descripciones son automáticas y se muestran etiquetadas.
 - El contenido de los documentos se trata como **dato no confiable**: se entrega delimitado al modelo, que tiene
   instrucciones de ignorar órdenes incluidas en él, y no dispone de herramientas con efectos secundarios.
 - No hay autenticación: está pensado para uso local de un solo usuario. **No lo exponga a Internet** sin añadir un
@@ -252,6 +255,7 @@ Verificado en esta máquina (Windows 11 + Docker Desktop + RTX 4050), con el sta
 - Flujo completo en la interfaz: subir PDF → procesar → preguntar a `qwen3:8b` → cita → visor PDF en la página con el
   fragmento resaltado. Copia de seguridad y restauración (BD + embeddings + PDF) probadas.
 - **EmbeddingGemma 2 en local** verificado de extremo a extremo (indexación, evaluación frente a e5, 15/15 y 7/7 con el LLM real, interfaz): ver «Modelo de embeddings» y `eval/RESULTS.md`.
+- **Figuras de PDF y modelo de visión** verificados de extremo a extremo con **Groq `qwen/qwen3.8-27b`** y EmbeddingGemma 2 local (PDF sintético con un gráfico y una foto): detección, OCR, descripción y vector; respuesta correcta **mirando la imagen**; ver «Figuras dentro de los PDF».
 - Módulo de embeddings por API verificado en el navegador contra el servidor de desarrollo: probar, consentimiento, vista previa (274 fragmentos, ≈238 mil caracteres), reindexado en ~15 s, búsqueda y chat con el modelo nuevo, vuelta inmediata al modelo local, borrado de vectores.
 - Interfaz verificada a mano en el navegador: notificaciones flotantes, eliminación de conversaciones con «Deshacer» (comprobada contra
   la API en ambos caminos), subida de duplicado/no-PDF/PDF corrupto, Ajustes (probar, cargar modelos, consentimiento externo), vista móvil.
@@ -263,7 +267,9 @@ Pendiente / limitaciones conocidas:
   abstenciones). Es una muestra pequeña de un solo documento. Con e5, el umbral de similitud (0,80) **no** separa por sí solo preguntas con
   y sin respuesta (la abstención fiable la aporta el LLM); con EmbeddingGemma 2 sí las separó (0,72), pero con la misma muestra pequeña. Evalúe con sus propios documentos (`eval/README.md`).
 - Rendimiento a escala (>50 000 fragmentos) y recall de HNSW no medidos; procedimiento en docs/OPERATIONS.md.
-- Proveedores OpenAI/Groq/Gemini: adaptador y pantalla de Ajustes probados contra un servidor compatible real (Ollama `/v1`), no contra esos servicios.
+- Proveedores externos: **Groq** está probado para visión (descripción y respuesta con imágenes); Gemini y OpenAI **no** se han probado con su servicio real (sí el adaptador y las pantallas, contra un servidor compatible y transportes simulados).
+- **Figuras de PDF:** no se ha medido la calidad de las descripciones con los PDF reales del usuario ni el rendimiento con 60 figuras; los umbrales de detección (`PDF_FIGURE_*`, `PDF_VECTOR_*`) se ajustaron con 5 PDF y pueden necesitar retoques con otros tipos; una descripción automática puede equivocarse.
+- **Audio y vídeo no se implementan** (el sistema solo recibe PDF). Se descartaron tras la aclaración del usuario; ver `docs/plans/PLAN_MULTIMODAL.md`.
 - **EmbeddingGemma 2** funciona en local, pero consume ≈1,9 GB de RAM mientras está cargado (con poca memoria libre, véase `EMBED_SERVER_DTYPE=bfloat16` y el tope `EMBED_SERVER_MEM_LIMIT` en docs/OPERATIONS.md §13); su ventaja sobre e5 se midió con un solo libro. Los embeddings por API **externa** están probados con un servidor de desarrollo (e5), no con un servicio real.
 - Los embeddings por API externa envían **todo el texto de los documentos**: úsese solo con información que pueda salir del equipo.
 - Las citas garantizan que el fragmento **existe y fue recuperado**, no que respalde semánticamente cada frase: contraste

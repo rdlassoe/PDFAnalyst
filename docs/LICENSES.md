@@ -23,7 +23,7 @@ por `pypdf` (BSD-3, ya incluido como respaldo) + `pdfminer.six` (MIT), perdiendo
 | psycopg 3 | LGPL-3.0 (enlace dinámico; compatible con AGPL) | metadatos |
 | Pydantic / pydantic-settings | MIT | metadatos |
 | pgvector (cliente Python) | MIT | metadatos |
-| **PyMuPDF** | **AGPL-3.0 / comercial** | metadatos |
+| **PyMuPDF** (texto, OCR y, ahora, detección y renderizado de las figuras de los PDF) | **AGPL-3.0 / comercial** | metadatos |
 | pypdf | BSD-3-Clause | metadatos |
 | pytesseract | Apache-2.0 | metadatos |
 | Pillow | MIT-CMU (HPND) | metadatos |
@@ -80,7 +80,8 @@ dependencia obligatoria de servicios de pago: los modelos se ejecutan localmente
 ## Proveedores externos opcionales
 
 OpenAI, Groq, Gemini y similares se conectan mediante el adaptador `openai-compatible`; son servicios de terceros con sus
-propios términos y **envían los fragmentos recuperados fuera de esta máquina**. Están bloqueados salvo
+propios términos y **envían los fragmentos recuperados fuera de esta máquina**. Usados como **modelo de visión** (Ajustes → Modelo de visión) reciben además las **imágenes de los PDF** (reducidas y sin EXIF) y, con «responder mirando», la pregunta y los fragmentos;
+los modelos de visión que ofrecen (p. ej. `qwen/qwen3.8-27b` en Groq, `gemini-2.5-flash`) son servicios, no pesos que se distribuyan con el proyecto: sus términos de uso y de datos son los de cada proveedor (en la capa gratuita de Gemini, según su página de precios, el contenido puede usarse para mejorar los productos de Google). Un modelo de visión **local** de Ollama (p. ej. `qwen3-vl:4b`) no se incluye ni se ha descargado: si se adopta, verifique su licencia con `ollama show --license` antes de redistribuirlo. Están bloqueados salvo
 `LLM_ALLOW_EXTERNAL=true`. Revise la política de retención/entrenamiento de datos de cada proveedor antes de usarlos con
 documentos sensibles. Esta integración se ha probado con un servidor compatible real (endpoint `/v1` de Ollama) y con
-transportes simulados para la lógica de errores, **no** contra los servicios comerciales.
+transportes simulados para la lógica de errores; **Groq** se probó además con visión real (descripción y respuesta con imágenes). Gemini y OpenAI **no** se han probado contra su servicio comercial.

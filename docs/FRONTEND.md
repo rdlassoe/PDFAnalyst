@@ -10,14 +10,16 @@ frontend/
 ├── app/
 │   ├── layout.tsx          # <html lang="es"> + <Providers> (notificaciones)
 │   ├── page.tsx            # pantalla principal: documentos · conversación · visor
-│   ├── ajustes/page.tsx    # Ajustes: proveedor de LLM
+│   ├── ajustes/page.tsx    # Ajustes: proveedor de LLM, modelo de embeddings y modelo de visión
 │   └── globals.css         # Tailwind + clases de componentes (.btn, .btn-primary, .btn-icon, .badge, .skeleton)
 ├── components/
 │   ├── Toaster.tsx         # notificaciones flotantes + diálogo de confirmación (useToast)
 │   ├── Providers.tsx       # monta <ToastProvider> (componente de cliente)
 │   ├── DocumentPanel.tsx   # subir/listar/eliminar documentos, colecciones
-│   ├── Chat.tsx            # conversaciones, mensajes, citas, copiar, eliminar con «Deshacer»
-│   ├── PdfViewer.tsx       # visor PDF.js con resaltado del fragmento citado
+│   ├── Chat.tsx            # conversaciones, mensajes, citas (insignias de descripción automática/OCR/imagen adjunta), medios relacionados, copiar, eliminar con «Deshacer»
+│   ├── PdfViewer.tsx       # visor PDF.js con resaltado del fragmento citado (la tarjeta de figura citada se monta en page.tsx)
+│   ├── ImageViewer.tsx     # visor de imágenes sueltas: descripción automática y «¿Qué ves en esta imagen?»
+│   ├── VisionSettingsPanel.tsx # modelo de visión (Gemini, Groq, Ollama…): perfiles, prueba con imagen, interruptor «responder mirando»
 │   ├── LlmSettingsPanel.tsx# perfiles de proveedor LLM (alta, edición, prueba, activación)
 │   └── EmbeddingSettingsPanel.tsx # perfiles de embeddings, vista previa de activación, vectores indexados
 ├── lib/api.ts              # cliente tipado de la API + tipos + isLocalUrl
@@ -97,7 +99,7 @@ el foco al cerrar.
 ### Principal (`/`)
 
 - **Cabecera:** estado de PostgreSQL+pgvector, embeddings y generación (punto verde/rojo) y botón **Ajustes**.
-- **Documentos:** subida con arrastrar y soltar (solo PDF; los demás archivos se omiten con aviso), estado por documento
+- **Documentos:** subida con arrastrar y soltar (PDF, y también imágenes PNG/JPEG/WebP; el resto se omite con aviso), estado por documento
   (en cola · procesando · listo · error), casilla para limitar la consulta, colecciones, reintento y eliminación con confirmación.
   Al terminar el procesamiento de un documento se notifica con acción «Abrir» (o «Reintentar» si falló). Esqueletos mientras carga.
 - **Conversación:** respuestas con etiquetas `[C1]` clicables y lista de «Fuentes verificadas»; estados visibles (sin evidencia, citas sin
@@ -108,7 +110,7 @@ el foco al cerrar.
 
 ### Ajustes (`/ajustes`)
 
-Dos secciones independientes:
+Tres secciones independientes (modelo de lenguaje, modelo de embeddings y modelo de visión):
 
 **Modelo de lenguaje (LLM)** — lista de proveedores (insignias *Predeterminado*, *Local/Servicio externo*, *Definido en .env*), **Probar**, **Usar por defecto**, alta/edición con
 plantillas (Ollama, Groq, Gemini, OpenAI, LM Studio…), **Cargar modelos**, clave API (una guardada nunca se muestra, solo «…1234»; vacío = conservar; casilla para eliminarla) y consentimiento
@@ -180,6 +182,8 @@ tipos de `next build`. Lista de comprobación tras cambios en la interfaz:
       editar el proveedor activo: modelo/prefijos bloqueados pero el umbral editable (valor inválido → aviso «Umbral no válido»).
 - [ ] Ajustes (embeddings, servicio **externo**, con `scripts/dev_embedding_server.py`, ver OPERATIONS §12): probar conexión; guardar sin permiso → «Usar por defecto» da error de permiso; con permiso, el diálogo muestra documentos, fragmentos, host y caracteres;
       tras confirmar, los documentos pasan a «procesando» y vuelven a «listo»; búsqueda y chat funcionan; volver al modelo local es inmediato (sin trabajos); borrar vectores del modelo de prueba y eliminar el proveedor.
+- [ ] Ajustes (modelo de visión): añadir la plantilla de Groq o Gemini → «Cargar modelos» → elegir un modelo con visión → «Probar con una imagen de prueba» (debe describir un círculo rojo) → un servicio externo sin el permiso «Permitir el envío de las imágenes» no se puede activar; el interruptor «Responder mirando las figuras» cambia y persiste.
+- [ ] PDF con figuras (**use un PDF no sensible: con un servicio externo las imágenes salen de la máquina**): la lista muestra «N figuras (M descritas)»; preguntar por el contenido de una figura → la respuesta indica «respondió mirando N imágenes», la cita de la figura abre el PDF en su página con la tarjeta «Figura citada» y la insignia «descripción automática»; «Volver a procesar» pide confirmación.
 - [ ] Vista móvil (375 px): pestañas, visor deslizante ajustado al ancho, sin desbordamiento horizontal; `Esc` cierra el visor.
 - [ ] Consola del navegador sin errores inesperados.
 
