@@ -29,6 +29,15 @@ class DocumentOut(ORM):
     status: str
     error: str | None
     created_at: datetime
+    media_type: str = "pdf"  # pdf | image | audio | video
+    mime: str | None = None
+    width: int | None = None
+    height: int | None = None
+    duration_ms: int | None = None
+    figure_count: int | None = None  # figuras detectadas dentro de un PDF
+    figures_described: int | None = None
+    thumbnail_url: str | None = None
+    description: str | None = None  # descripción automática (imágenes), si hay un modelo de visión
     chunk_count: int | None = None
     ocr_pages: int | None = None
     warnings: list[str] = []
@@ -72,6 +81,10 @@ class HitOut(BaseModel):
     coverage: float
     rrf: float
     relevant_by: list[str]
+    modality: str = "text"
+    source: str = "pdf_text"
+    start_ms: int | None = None
+    end_ms: int | None = None
 
 
 class SearchOut(BaseModel):
@@ -103,6 +116,10 @@ class CitationOut(BaseModel):
     page_end: int | None
     score: float | None
     snippet: str | None
+    modality: str | None = None
+    source: str | None = None
+    start_ms: int | None = None
+    end_ms: int | None = None
 
 
 class MessageOut(BaseModel):
@@ -122,3 +139,6 @@ class ChunkOut(BaseModel):
     page_start: int
     page_end: int
     text: str
+    modality: str = "text"
+    source: str = "pdf_text"
+    figure_url: str | None = None  # el fragmento pertenece a una figura de un PDF

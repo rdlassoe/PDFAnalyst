@@ -53,12 +53,12 @@ GEMMA_MIN_SIMILARITY = 0.72
 PRESETS = [
     {"id": "gemma2-local", "label": "EmbeddingGemma 2 (local, servicio «embedder» incluido)", "kind": "openai-compatible",
      "base_url": "http://embedder:8000/v1", "model": "google/embeddinggemma-2", "query_prefix": GEMMA_QUERY_PREFIX,
-     "passage_prefix": GEMMA_PASSAGE_PREFIX, "dimensions": None, "min_similarity": GEMMA_MIN_SIMILARITY, "needs_key": False, "key_url": None,
+     "passage_prefix": GEMMA_PASSAGE_PREFIX, "dimensions": None, "min_similarity": GEMMA_MIN_SIMILARITY, "supports_media": True, "needs_key": False, "key_url": None,
      "note": "Se ejecuta en su equipo (CPU, solo texto, ≈1,7 GB de RAM medidos, un único proceso): ningún texto sale de él. Apache-2.0. La primera vez hay que descargar "
              "≈1,5 GB del modelo desde Hugging Face (`docker compose run --rm embedder python -m app.embedding_server --download`). Prefijos oficiales del modelo."},
     {"id": "gemma2-api", "label": "EmbeddingGemma 2 (servidor externo compatible con OpenAI)", "kind": "openai-compatible", "base_url": "",
      "model": "google/embeddinggemma-2", "query_prefix": GEMMA_QUERY_PREFIX, "passage_prefix": GEMMA_PASSAGE_PREFIX, "dimensions": None,
-     "min_similarity": GEMMA_MIN_SIMILARITY, "needs_key": True, "key_url": None,
+     "min_similarity": GEMMA_MIN_SIMILARITY, "supports_media": False, "needs_key": True, "key_url": None,
      "note": "Indique la URL base del servicio que lo aloje (p. ej. su propio servidor con llama.cpp `llama-server --embeddings`). "
              "No se ha confirmado ningún proveedor alojado de EmbeddingGemma 2; el nombre del modelo depende del servicio. "
              "Los prefijos son los oficiales del modelo; algunos servicios ya los aplican: verifíquelo."},
@@ -86,7 +86,7 @@ def profile_config(p: EmbeddingProfile) -> EmbedderConfig:
             raise EmbeddingError(str(exc), permanent=True) from exc
     return EmbedderConfig(
         kind=p.kind, model=p.model, base_url=p.base_url, api_key=key, allow_external=p.allow_external,
-        query_prefix=p.query_prefix, passage_prefix=p.passage_prefix, dimensions=p.dimensions, min_similarity=p.min_similarity,
+        query_prefix=p.query_prefix, passage_prefix=p.passage_prefix, dimensions=p.dimensions, min_similarity=p.min_similarity, supports_media=p.supports_media,
         batch_size=s.embedding_batch_size, timeout_s=s.embedding_timeout_s, label=p.name,
     )
 
@@ -145,14 +145,15 @@ def _validate(kind: str, base_url: str, model: str, name: str | None, dimensions
 
 def create_profile(session: Session, *, name: str, kind: str, base_url: str, model: str, api_key: str | None, allow_external: bool,
                    query_prefix: str = "", passage_prefix: str = "", dimensions: int | None = None,
-                   min_similarity: float | None = None) -> EmbeddingProfile:
+                   min_similarity: float | None = None, supports_media: bool = False) -> EmbeddingProfile:
     base = _validate(kind, base_url, model, name, dimensions, query_prefix, passage_prefix, min_similarity)
     if session.scalar(select(EmbeddingProfile).where(EmbeddingProfile.name == name.strip())):
         raise SettingsError("Ya existe un proveedor de embeddings con ese nombre")
     key = clean_api_key(api_key) if api_key else ""
     p = EmbeddingProfile(name=name.strip(), kind=kind, base_url=base, model=model.strip(),
                          api_key_enc=credentials.encrypt(key) if key else None, allow_external=bool(allow_external),
-                         query_prefix=query_prefix, passage_prefix=passage_prefix, dimensions=dimensions, min_similarity=min_similarity)
+                         query_prefix=query_prefix, passage_prefix=passage_prefix, dimensions=dimensions, min_similarity=min_similarity,
+                         supports_media=bool(supports_media))
     session.add(p)
     session.commit()
     return p
@@ -164,7 +165,7 @@ _UNSET = object()
 def update_profile(session: Session, profile_id: str, *, name: str | None = None, kind: str | None = None, base_url: str | None = None,
                    model: str | None = None, api_key: str | None = None, clear_api_key: bool = False, allow_external: bool | None = None,
                    query_prefix: str | None = None, passage_prefix: str | None = None, dimensions: object = _UNSET,
-                   min_similarity: object = _UNSET) -> EmbeddingProfile:
+                   min_similarity: object = _UNSET, supports_media: bool | None = None) -> EmbeddingProfile:
     p = _get_profile(session, profile_id)
     new = dict(
         kind=kind or p.kind, model=model if model is not None else p.model,
@@ -182,6 +183,8 @@ def update_profile(session: Session, profile_id: str, *, name: str | None = None
                            p.min_similarity if min_similarity is _UNSET else min_similarity)
     if min_similarity is not _UNSET:  # solo afecta a la búsqueda, no a los vectores: se puede cambiar con el perfil activo
         p.min_similarity = min_similarity
+    if supports_media is not None:  # capacidad del servicio, no cambia los vectores de texto
+        p.supports_media = bool(supports_media)
     for k, v in new.items():
         setattr(p, k, v.strip() if k == "model" else v)
     if name is not None and name.strip() != p.name:
@@ -304,11 +307,11 @@ def purge_vectors(session: Session, model_id: int) -> dict:
 # ------------------------------------------------------------------------------ vistas (sin secretos)
 def _view(*, id_: str, name: str, kind: str, base_url: str, model: str, has_key: bool, key_hint: str | None, key_error: bool,
           allow_external: bool, editable: bool, active: bool, qp: str, pp: str, dims: int | None, external: bool,
-          min_similarity: float | None = None) -> dict:
+          min_similarity: float | None = None, supports_media: bool = False) -> dict:
     return {"id": id_, "name": name, "kind": kind, "base_url": base_url, "model": model, "has_key": has_key, "key_hint": key_hint,
             "key_error": key_error, "allow_external": allow_external, "external": external, "editable": editable, "active": active,
             "query_prefix": qp, "passage_prefix": pp, "dimensions": dims,
-            "min_similarity": min_similarity}
+            "min_similarity": min_similarity, "supports_media": supports_media}
 
 
 def list_view(session: Session) -> dict:
@@ -330,7 +333,7 @@ def list_view(session: Session) -> dict:
         cfg = EmbedderConfig(kind=p.kind, model=p.model, base_url=p.base_url)
         out.append(_view(id_=str(p.id), name=p.name, kind=p.kind, base_url=p.base_url, model=p.model, has_key=bool(p.api_key_enc),
                          key_hint=hint, key_error=err, allow_external=p.allow_external, editable=True, active=str(p.id) == active,
-                         qp=p.query_prefix, pp=p.passage_prefix, dims=p.dimensions, external=cfg.external, min_similarity=p.min_similarity))
+                         qp=p.query_prefix, pp=p.passage_prefix, dims=p.dimensions, external=cfg.external, min_similarity=p.min_similarity, supports_media=p.supports_media))
     row = active_model_row(session)
     cov = model_coverage(session, row.id if row else -1)
     indexed = sum(1 for n, e_ in cov.values() if e_ >= n)

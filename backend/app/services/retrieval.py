@@ -77,6 +77,11 @@ class Hit:
     coverage: float = 0.0
     rrf: float = 0.0
     relevant_by: list[str] = field(default_factory=list)
+    modality: str = "text"  # text | image | audio | video | page_image
+    source: str = "pdf_text"  # pdf_text | ocr | asr | caption | media
+    start_ms: int | None = None
+    end_ms: int | None = None
+    meta: dict = field(default_factory=dict)  # figura de PDF: {"figure": n, "bbox": [...], "kind": ...}
 
 
 @dataclass
@@ -121,6 +126,11 @@ def _hit_from_row(r) -> Hit:
         page_end=r.page_end,
         text=r.text,
         similarity=getattr(r, "sim", None),
+        modality=getattr(r, "modality", "text"),
+        source=getattr(r, "source", "pdf_text"),
+        start_ms=getattr(r, "start_ms", None),
+        end_ms=getattr(r, "end_ms", None),
+        meta=getattr(r, "meta", None) or {},
     )
 
 
@@ -135,7 +145,7 @@ def vector_search(session: Session, model: EmbeddingModel, qvec, doc_ids: list[u
     session.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
     stmt = text(
         f"""
-        SELECT c.id, c.document_id, c.page_start, c.page_end, c.text, d.filename,
+        SELECT c.id, c.document_id, c.page_start, c.page_end, c.text, d.filename, c.modality, c.source, c.start_ms, c.end_ms, c.meta,
                1 - (ce.embedding::vector({dim}) <=> CAST(:q AS vector({dim}))) AS sim
         FROM chunk_embeddings ce
         JOIN document_chunks c ON c.id = ce.chunk_id
@@ -172,7 +182,7 @@ def distinctive_terms(
         f"count(*) FILTER (WHERE tsv @@ to_tsquery('simple', :t{i})) AS d{i}" for i in range(len(terms))
     )
     stmt = text(
-        f"SELECT count(*) AS n, {filters} FROM document_chunks WHERE document_id = ANY(:docs)"
+        f"SELECT count(*) AS n, {filters} FROM document_chunks WHERE document_id = ANY(:docs) AND modality = 'text'"
     ).bindparams(bindparam("docs", type_=ARRAY(PG_UUID(as_uuid=True))))
     params = {f"t{i}": t for i, t in enumerate(terms)} | {"docs": doc_ids}
     row = session.execute(stmt, params).one()
@@ -202,14 +212,14 @@ def fts_search(
     tsq = " | ".join(terms)  # términos ya reducidos a [^\W_]+ : no hay sintaxis de tsquery inyectable
     stmt = text(
         f"""
-        SELECT c.id, c.document_id, c.page_start, c.page_end, c.text, d.filename,
+        SELECT c.id, c.document_id, c.page_start, c.page_end, c.text, d.filename, c.modality, c.source, c.start_ms, c.end_ms, c.meta,
                ts_rank_cd(c.tsv, q.tsq) AS fts_score,
                1 - (ce.embedding::vector({dim}) <=> CAST(:q AS vector({dim}))) AS sim
         FROM document_chunks c
         JOIN documents d ON d.id = c.document_id
         CROSS JOIN (SELECT to_tsquery('simple', :tsq) AS tsq) q
         LEFT JOIN chunk_embeddings ce ON ce.chunk_id = c.id AND ce.model_id = :m
-        WHERE c.tsv @@ q.tsq AND c.document_id = ANY(:docs)
+        WHERE c.tsv @@ q.tsq AND c.document_id = ANY(:docs) AND c.modality = 'text'
         ORDER BY fts_score DESC, c.id
         LIMIT :n
         """
@@ -288,7 +298,8 @@ def retrieve(
     min_sim = embedder.min_similarity if embedder.min_similarity is not None else s.retrieval_min_similarity
     kept: list[Hit] = []
     for h in fused:
-        if use_vec and h.similarity is not None and h.similarity >= min_sim:
+        threshold = min_sim if h.modality == "text" else s.retrieval_min_similarity_media  # imagen/audio/vídeo: otra escala de similitud
+        if use_vec and h.similarity is not None and h.similarity >= threshold:
             h.relevant_by.append("similarity")
         if use_fts and h.fts_rank is not None and h.coverage >= s.retrieval_fts_min_coverage:
             h.relevant_by.append("keywords")

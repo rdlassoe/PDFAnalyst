@@ -27,6 +27,10 @@ def _citation_out(c: MessageCitation, filename: str | None) -> CitationOut:
         page_end=c.page_end,
         score=c.score,
         snippet=snippet,
+        modality=c.modality,
+        source=c.source,
+        start_ms=c.start_ms,
+        end_ms=c.end_ms,
     )
 
 

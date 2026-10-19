@@ -177,7 +177,20 @@ reprocesar (el cambio de modelo de embeddings: §4).
 | `EMBED_SERVER_DEVICE` / `EMBED_SERVER_THREADS` | `cpu` / `0` | embedder | Dispositivo e hilos de PyTorch (`0` = por defecto). Limite los hilos si el equipo se satura al indexar. |
 | `EMBED_SERVER_MAX_SEQ_LENGTH` / `EMBED_SERVER_MAX_BATCH` | `2048` / `64` | embedder | Tope de tokens por texto (acota la memoria; el modelo admite 8192) y de textos por petición. |
 | `EMBED_SERVER_PRELOAD` / `EMBED_SERVER_API_KEY` | `false` / vacío | embedder | Cargar el modelo al arrancar (si no, en la primera petición) / exigir `Authorization: Bearer` (opcional). |
-| `EMBED_SERVER_MEM_LIMIT` | `3g` | embedder | Tope de memoria del contenedor (medido: ≈1,9 GiB en uso con el modelo cargado). |
+| `EMBED_SERVER_MEM_LIMIT` | `4608m` | embedder | Tope de memoria del contenedor. Medido (fp32): solo texto ≈2,0 GB · texto+imagen ≈3,0 GB · texto+audio ≈3,7 GB. |
+| `EMBED_SERVER_MEDIA_IDLE_S` | `300` | embedder | Segundos sin usar medios tras los cuales el servicio vuelve a solo texto y libera memoria (`0` = nunca). |
+| `EMBED_SERVER_IMAGE_TOKENS` / `EMBED_SERVER_VIDEO_TOKENS` | `280` / `140` | embedder | Presupuesto visual (70–1120) por imagen / por fotograma. Medido: 280 ≈ 3,3 s, 140 ≈ 1,5 s, 70 ≈ 0,7 s por imagen en esta CPU. |
+| `EMBED_SERVER_MEDIA_MAX_AUDIO_S` | `300` | embedder | Ventana máxima de audio por vector (el modelo admite ≈327 s). |
+| `MEDIA_MAX_IMAGE_MB` / `MEDIA_MAX_PIXELS` | `20` / `40000000` | api, worker | Tamaño máximo de una imagen y megapíxeles máximos (protege de bombas de descompresión). |
+| `MEDIA_THUMB_PX` | `320` | api, worker | Lado mayor de las miniaturas (JPEG sin EXIF). |
+| `VISION_MAX_SIDE` / `VISION_MAX_TOKENS` / `VISION_RETRIES` | `1568` / `500` / `3` | api, worker | Las imágenes se reducen a este lado mayor antes de enviarlas al modelo de visión; longitud máxima de la descripción; reintentos ante 429. |
+| `PDF_FIGURES_ENABLED` | `true` | api, worker | Detectar las figuras (imágenes y gráficos) de los PDF. `false` = comportamiento anterior (solo texto). |
+| `PDF_FIGURES_MAX` | `60` | api, worker | Tope de figuras por documento (las más grandes primero; se avisa de las omitidas). Cada figura cuesta OCR, vector y, con modelo de visión, una descripción. |
+| `PDF_FIGURE_MIN_PX` / `PDF_FIGURE_MIN_AREA` | `100` / `0.02` | api, worker | Una imagen incrustada se ignora si su lado menor es menor que esto o si ocupa menos de esta fracción de la página. |
+| `PDF_FIGURE_REPEAT_PAGES` | `3` | api, worker | Una imagen presente en ≥ N páginas (fondo, logo, marca de agua) se ignora. |
+| `PDF_VECTOR_MIN_PATHS` / `PDF_VECTOR_MIN_AREA` | `40` / `0.15` | api, worker | Un gráfico vectorial es una región con ≥ N trazos que cubre ≥ esta fracción de la página. |
+| `VISION_ANSWER_MAX_IMAGES` | `3` | api | Figuras que se adjuntan al modelo de visión al responder mirándolas. |
+| `RETRIEVAL_MIN_SIMILARITY_MEDIA` | `0.65` | api | Umbral coseno para imágenes/audio/vídeo (otra escala que texto→texto). Provisional: medido con imágenes sintéticas (correctas 0,74–0,84; ajenas ≤ 0,62; con una imagen real 0,73–0,74). Calibrar con imágenes reales. |
 | `RETRIEVAL_TOP_K` / `RETRIEVAL_CANDIDATES` | `6` / `30` | api | Fragmentos que llegan al LLM / candidatos por rama. |
 | `RETRIEVAL_MIN_SIMILARITY` | `0.80` | api | Umbral coseno de relevancia por defecto (calibrado para e5, que comprime las similitudes). Un proveedor de Ajustes puede llevar el suyo (EmbeddingGemma 2: 0,72). **No separa por sí solo** preguntas con y sin respuesta con e5 (README §Estado); la abstención fiable la aporta el LLM. |
 | `RETRIEVAL_FTS_MIN_COVERAGE` | `0.5` | api | Fracción de términos distintivos de la pregunta que debe contener un fragmento. |
@@ -262,3 +275,35 @@ respuestas con cita correcta y 7/7 abstenciones. Muestra pequeña de un solo doc
 | `ImportError … torchvision` al cargar | Imagen antigua: el procesador del modelo importa torchvision aunque se use solo texto. `docker compose build embedder` (el `Dockerfile` ya lo instala). |
 | `EMBED_SERVER_DTYPE debe ser float32 o bfloat16` | EmbeddingGemma 2 no admite `float16`; se rechaza a propósito. |
 | Quiero usarlo desde Ollama | **No funciona en Windows/Linux con CUDA**: las compilaciones de `embeddinggemma-2` en Ollama exigen MLX (solo Apple Silicon). Por eso se sirve con sentence-transformers. |
+
+## 14. Figuras de PDF y modelo de visión
+
+**Figuras dentro de un PDF (lo principal):** al procesar un PDF se detectan sus imágenes y gráficos, se leen (OCR), se describen (modelo de visión) y se vectorizan; al responder, el modelo de visión puede recibirlas (Ajustes → Modelo de visión → «Responder mirando las figuras»). Para que un PDF ya subido lea sus figuras: botón «Volver a procesar». La lista de documentos muestra «N figuras (M descritas)»; los avisos del documento indican si hubo figuras omitidas por el tope, límites de tasa del proveedor o descripciones que fallaron. Ajuste de la detección: `PDF_FIGURE_*`, `PDF_VECTOR_*`, `PDF_FIGURES_MAX` (§10). Un PDF cuyas páginas son todas imágenes y sin OCR ya no falla: se indexa por sus figuras con un aviso (sin modelo de visión no se podrá responder con su contenido).
+
+| Síntoma | Causa probable / solución |
+|---------|---------------------------|
+| Un PDF con imágenes no «ve» las figuras | Se subió antes de esta función: «Volver a procesar». Si `figure_count` es 0, la imagen es pequeña, repetida en ≥ 3 páginas o el PDF no tiene imágenes (baje `PDF_FIGURE_MIN_AREA`/`PDF_FIGURE_REPEAT_PAGES` si hace falta). |
+| Figuras detectadas pero sin descripción | No hay modelo de visión activo, o el proveedor falló/limitó (ver avisos del documento); reprocese más tarde. |
+| Procesar un PDF con muchas figuras tarda | Cada figura hace OCR, una llamada al modelo de visión y un vector (≈3 s en CPU). Con Gemini gratuito (≈10 peticiones/min) 60 figuras tardan ≈6 min. Baje `PDF_FIGURES_MAX`. |
+| «Responder mirando» envía datos fuera | Con un modelo de visión externo, la pregunta, los fragmentos y hasta 3 figuras van a ese servicio. Desactive el interruptor para usar solo descripciones y el LLM de texto. |
+
+**Imágenes sueltas:** además se pueden subir imágenes sueltas (el sistema está pensado para PDF). **Subir imágenes:** PNG, JPEG y WebP (la firma del archivo decide, no la extensión; SVG y GIF se rechazan). Límites: `MEDIA_MAX_IMAGE_MB` y `MEDIA_MAX_PIXELS`. Cada imagen genera un fragmento de medio (vector), uno de OCR
+(si Tesseract lee texto) y, si hay modelo de visión, uno con la descripción automática.
+
+**Encontrar imágenes por texto (EmbeddingGemma 2):** el perfil de embeddings activo debe ser el servicio local `embedder` con *«admite imágenes, audio y vídeo»* marcado (la plantilla «EmbeddingGemma 2 (local)» lo trae; en un perfil
+existente, edítelo y márquelo: no invalida vectores y rige al instante). Con otro modelo (p. ej. e5) las imágenes se aceptan pero solo se buscan por su OCR/descripción. La primera imagen carga el codificador de visión (≈3 GB de
+RAM, 20–30 s); a los `EMBED_SERVER_MEDIA_IDLE_S` segundos sin uso el servicio vuelve a solo texto. Con poca RAM libre, cierre otras aplicaciones al indexar imágenes (o suba pocas a la vez).
+
+**Decir qué se ve (modelo de visión):** Ajustes → Modelo de visión. Plantillas: Google Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`, p. ej. `gemini-2.5-flash`), Groq (elija un modelo con visión en
+«Cargar modelos»; Groq no indica si está en el plan gratuito) y Ollama local (`ollama pull qwen3-vl:4b`, ≈3,3 GB, o `qwen3-vl:2b`, ≈1,9 GB). Pasos: *Añadir modelo de visión* → clave API → *Cargar modelos* → elegir uno con visión →
+marcar *«Permitir el envío de las imágenes»* (servicios externos) → *Probar con una imagen de prueba* → *Usar para describir*. Ya subidas antes de activarlo: «Reintentar»/reprocesar la imagen para generar su descripción.
+
+| Síntoma | Causa probable / solución |
+|---------|---------------------------|
+| «Probar con una imagen de prueba» dice 400/404 o devuelve un error del modelo | El modelo elegido no admite imágenes: use «Cargar modelos» y elija otro. |
+| «El proveedor limitó las peticiones (429)» | Límite de la capa gratuita (por minuto o por día). La ingesta reintenta con espera (`VISION_RETRIES`); si se agota, la imagen queda indexada sin descripción y con un aviso: reprocésela más tarde. |
+| La imagen se indexa sin descripción y con el aviso «No se pudo describir la imagen» | Fallo del proveedor o consentimiento retirado; la imagen sigue siendo buscable por su vector y su OCR. |
+| Una imagen no aparece en las búsquedas | El perfil de embeddings activo no admite medios (casilla) o aún se está indexando; compruebe `docker compose logs embedder`. |
+| El servicio `embedder` se reinicia al indexar imágenes (OOM) | Falta memoria: suba `EMBED_SERVER_MEM_LIMIT`, cierre aplicaciones o baje `EMBED_SERVER_IMAGE_TOKENS`. |
+| Gemini/Groq envían las imágenes fuera | Es lo esperado con un servicio externo: solo con el permiso marcado; en la capa gratuita de Gemini el contenido puede usarse para mejorar sus productos. |
+

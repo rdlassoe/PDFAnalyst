@@ -114,7 +114,13 @@ Dos secciones independientes:
 plantillas (Ollama, Groq, Gemini, OpenAI, LM Studio…), **Cargar modelos**, clave API (una guardada nunca se muestra, solo «…1234»; vacío = conservar; casilla para eliminarla) y consentimiento
 para servicios externos. Detalle de seguridad en README y `docs/OPERATIONS.md` §7.
 
-**Modelo de embeddings** (`EmbeddingSettingsPanel`) — misma estructura, con diferencias deliberadas:
+**Modelo de visión** (`VisionSettingsPanel`) — mismo patrón que el del LLM, para Gemini, Groq, Ollama u otro compatible: sin modelo activo (`none`) por defecto, plantillas con nota de privacidad, «Cargar modelos», casilla *«Permitir el envío de las imágenes»* (un servicio externo exige confirmación al activarlo; retirarla lo desactiva), «Probar conexión» y «Probar con una imagen de prueba» (muestra lo que el modelo describe de un círculo rojo). Banner que indica si hay modelo activo y si es externo.
+
+**Figuras de PDF:** la lista de documentos muestra «N figuras (M descritas)» y un botón «Volver a procesar» (con confirmación: puede reenviar las figuras a un servicio externo); una cita de una figura abre el PDF en su página y muestra una tarjeta «Figura citada» con la imagen, su descripción automática (etiquetada) y la opción de ocultarla; las figuras relacionadas aparecen como miniaturas con su página; el mensaje indica «respondió mirando N imágenes» y, si hubo servicio externo, que se enviaron la pregunta, los fragmentos y las imágenes. En el panel de visión hay un interruptor «Responder mirando las figuras de los PDF».
+
+**Imágenes sueltas:** `DocumentPanel` admite PDF y PNG/JPEG/WebP (el servidor valida la firma) y muestra la miniatura; `ImageViewer` (en el panel del visor) muestra la imagen, su **descripción automática** (etiquetada: puede equivocarse) y el campo «Pregunte al modelo de visión»; en el chat, las citas de descripciones llevan la insignia «descripción automática» (o «OCR») y las imágenes que coinciden sin texto aparecen como «Medios relacionados» (miniaturas que abren el visor).
+
+**Modelo de embeddings** (`EmbeddingSettingsPanel`) — misma estructura, con diferencias deliberadas (incluye la casilla «admite imágenes, audio y vídeo» para servicios locales):
 
 - Una nota fija recuerda las reglas (se indexa solo con el modelo seleccionado; no consultable mientras se reindexa; volver a un modelo indexado es inmediato) y la cobertura
   «indexados con el modelo activo: X de Y».

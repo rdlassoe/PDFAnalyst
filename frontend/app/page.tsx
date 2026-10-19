@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Chat from "@/components/Chat";
 import DocumentPanel from "@/components/DocumentPanel";
+import ImageViewer from "@/components/ImageViewer";
 import PdfViewer from "@/components/PdfViewer";
 import { useToast } from "@/components/Toaster";
 import { api, type Citation, type Collection, type Doc, type Health } from "@/lib/api";
@@ -15,6 +16,10 @@ interface Viewing {
   page: number;
   highlight: string | null;
   key: string | null;
+  image?: boolean; // un documento de tipo imagen se abre en el visor de imágenes
+  figureUrl?: string | null; // figura de un PDF citada: se muestra junto a la página
+  figureText?: string | null;
+  figureAuto?: boolean; // el texto es una descripción automática de un modelo de visión
 }
 
 function Dot({ ok, label, detail }: { ok: boolean | undefined; label: string; detail?: string }) {
@@ -62,8 +67,8 @@ export default function Home() {
     [toast],
   );
 
-  const openDoc = useCallback((d: Pick<Doc, "id" | "filename">) => {
-    setViewing({ docId: d.id, filename: d.filename, page: 1, highlight: null, key: null });
+  const openDoc = useCallback((d: Pick<Doc, "id" | "filename"> & Partial<Pick<Doc, "media_type">>) => {
+    setViewing({ docId: d.id, filename: d.filename, page: 1, highlight: null, key: null, image: d.media_type === "image" });
     setDrawerOpen(true);
   }, []);
 
@@ -182,14 +187,24 @@ export default function Home() {
       return;
     }
     let highlight = c.snippet;
+    let figureUrl: string | null = null;
     if (c.chunk_id != null) {
       try {
-        highlight = (await api.chunk(c.chunk_id)).text; // el fragmento exacto completo
+        const ch = await api.chunk(c.chunk_id);
+        highlight = ch.text; // el fragmento exacto completo
+        if (ch.figure_url) {
+          figureUrl = api.figureUrl(c.chunk_id); // el fragmento es de una figura: se muestra la imagen en lugar de buscar su texto en la página
+          highlight = null;
+        }
       } catch {
         /* se usa el extracto */
       }
     }
-    setViewing({ docId: c.document_id, filename: c.filename ?? "Documento", page: c.page_start ?? 1, highlight, key: c.chunk_id != null ? String(c.chunk_id) : null });
+    const isImage = docs.find((d) => d.id === c.document_id)?.media_type === "image";
+    setViewing({
+      docId: c.document_id, filename: c.filename ?? "Documento", page: c.page_start ?? 1, highlight, key: c.chunk_id != null ? String(c.chunk_id) : null, image: isImage,
+      figureUrl, figureText: figureUrl && c.source === "caption" ? c.snippet : null, figureAuto: c.source === "caption",
+    });
     setDrawerOpen(true);
   }
 
@@ -269,13 +284,37 @@ export default function Home() {
             scopeLabel={scopeLabel}
             readyCount={readyDocs.length}
             onOpenCitation={(c) => void openCitation(c)}
+            onOpenMedia={(id, filename, page, chunkId) => {
+              const mt = docs.find((d) => d.id === id)?.media_type;
+              if (chunkId != null && mt === "pdf") {
+                setViewing({ docId: id, filename, page: page ?? 1, highlight: null, key: String(chunkId), figureUrl: api.figureUrl(chunkId), figureText: null, figureAuto: false });
+                setDrawerOpen(true);
+              } else openDoc({ id, filename, media_type: mt });
+            }}
             activeCitation={viewing?.key ?? null}
           />
         </section>
         <section
-          className={`min-h-0 bg-paper ${drawerOpen ? "fixed inset-0 z-50 block animate-slide-in-right" : "hidden"} lg:static lg:z-auto lg:block lg:animate-none`}
+          className={`min-h-0 flex-col bg-paper ${drawerOpen ? "fixed inset-0 z-50 flex animate-slide-in-right" : "hidden"} lg:static lg:z-auto lg:flex lg:animate-none`}
           aria-label="Visor de documento"
         >
+          {viewing?.figureUrl && (
+            <div className="shrink-0 border-b border-line bg-white p-2" role="region" aria-label="Figura citada">
+              <div className="flex items-start gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={viewing.figureUrl} alt="Figura citada" className="max-h-40 max-w-[45%] rounded border border-line object-contain" />
+                <div className="min-w-0 flex-1 text-xs">
+                  <p className="font-semibold text-ink">Figura de la página {viewing.page}</p>
+                  {viewing.figureText && <p className="mt-1 line-clamp-5 text-ink-soft">{viewing.figureText}</p>}
+                  {viewing.figureAuto && <p className="mt-1 text-[11px] text-warn">Descripción automática: puede equivocarse. Compárela con la imagen.</p>}
+                </div>
+                <button className="btn-icon shrink-0" aria-label="Ocultar la figura" onClick={() => setViewing((v) => (v ? { ...v, figureUrl: null } : v))}>×</button>
+              </div>
+            </div>
+          )}
+          {viewing?.image && docs.find((d) => d.id === viewing.docId) ? (
+            <ImageViewer doc={docs.find((d) => d.id === viewing.docId)!} onClose={() => setDrawerOpen(false)} />
+          ) : (
           <PdfViewer
             url={viewing ? api.fileUrl(viewing.docId) : null}
             filename={viewing?.filename}
@@ -284,6 +323,7 @@ export default function Home() {
             onPageChange={(p) => setViewing((v) => (v ? { ...v, page: p, highlight: null } : v))}
             onClose={() => setDrawerOpen(false)}
           />
+          )}
         </section>
       </main>
     </div>

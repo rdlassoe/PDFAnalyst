@@ -21,6 +21,20 @@ x-backend-env: &backend-env
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
   # Parámetros ajustables (los valores por defecto coinciden con backend/app/config.py). Ver docs/OPERATIONS.md §10.
   MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+  MEDIA_MAX_IMAGE_MB: ${MEDIA_MAX_IMAGE_MB:-20}
+  MEDIA_MAX_PIXELS: ${MEDIA_MAX_PIXELS:-40000000}
+  MEDIA_THUMB_PX: ${MEDIA_THUMB_PX:-320}
+  VISION_MAX_SIDE: ${VISION_MAX_SIDE:-1568}
+  VISION_MAX_TOKENS: ${VISION_MAX_TOKENS:-500}
+  VISION_RETRIES: ${VISION_RETRIES:-3}
+  PDF_FIGURES_ENABLED: ${PDF_FIGURES_ENABLED:-true}
+  PDF_FIGURES_MAX: ${PDF_FIGURES_MAX:-60}
+  PDF_FIGURE_MIN_PX: ${PDF_FIGURE_MIN_PX:-100}
+  PDF_FIGURE_MIN_AREA: ${PDF_FIGURE_MIN_AREA:-0.02}
+  PDF_FIGURE_REPEAT_PAGES: ${PDF_FIGURE_REPEAT_PAGES:-3}
+  PDF_VECTOR_MIN_PATHS: ${PDF_VECTOR_MIN_PATHS:-40}
+  PDF_VECTOR_MIN_AREA: ${PDF_VECTOR_MIN_AREA:-0.15}
+  VISION_ANSWER_MAX_IMAGES: ${VISION_ANSWER_MAX_IMAGES:-3}
   EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
   EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
   EMBEDDING_ALLOW_EXTERNAL: ${EMBEDDING_ALLOW_EXTERNAL:-false}
@@ -90,9 +104,16 @@ services:
       EMBED_SERVER_MAX_SEQ_LENGTH: ${EMBED_SERVER_MAX_SEQ_LENGTH:-2048}
       EMBED_SERVER_PRELOAD: ${EMBED_SERVER_PRELOAD:-false}
       EMBED_SERVER_THREADS: ${EMBED_SERVER_THREADS:-0}
+      # Medios (imagen/audio/vídeo): el servicio lee archivos de esta raíz (nunca fuera) y carga los codificadores solo mientras hacen falta
+      EMBED_SERVER_MEDIA_ROOT: /data/storage
+      EMBED_SERVER_MEDIA_IDLE_S: ${EMBED_SERVER_MEDIA_IDLE_S:-300}
+      EMBED_SERVER_IMAGE_TOKENS: ${EMBED_SERVER_IMAGE_TOKENS:-280}
+      EMBED_SERVER_VIDEO_TOKENS: ${EMBED_SERVER_VIDEO_TOKENS:-140}
+      EMBED_SERVER_MEDIA_MAX_AUDIO_S: ${EMBED_SERVER_MEDIA_MAX_AUDIO_S:-300}
     volumes:
       - appdata:/data
-    mem_limit: ${EMBED_SERVER_MEM_LIMIT:-3g} # protege al equipo: el modelo de solo texto ocupa ≈1,9 GiB medidos en fp32
+    # Solo texto ≈2,0 GB (medido en fp32 con carga); texto+imagen ≈3,0 GB; texto+audio ≈3,7 GB (la memoria extra solo se usa mientras se indexan medios)
+    mem_limit: ${EMBED_SERVER_MEM_LIMIT:-4608m}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
       interval: 15s

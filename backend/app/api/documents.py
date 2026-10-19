@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -11,7 +12,8 @@ from ..config import get_settings
 from ..db import get_session
 from ..models import Document, DocumentChunk, DocumentPage, ProcessingJob
 from ..schemas import ChunkOut, DocumentOut, JobOut, UploadOut
-from ..services import storage
+from ..providers import LLMError
+from ..services import media_ingest, storage, vision
 from ..services.ingestion import delete_document, enqueue_job, register_upload
 from ..services.pdf_extract import PdfError
 
@@ -23,6 +25,11 @@ def doc_out(doc: Document) -> DocumentOut:
     out = DocumentOut.model_validate(doc)
     out.chunk_count, out.ocr_pages = meta.get("chunk_count"), meta.get("ocr_pages")
     out.warnings = meta.get("warnings", [])
+    fig = meta.get("figures") or {}
+    out.figure_count, out.figures_described = fig.get("count"), fig.get("described")
+    if doc.media_type == "image":
+        out.thumbnail_url = f"/documents/{doc.id}/thumbnail"
+        out.description = meta.get("description")
     return out
 
 
@@ -88,9 +95,42 @@ def download_file(doc_id: uuid.UUID, session: Session = Depends(get_session)):
         raise HTTPException(404, "Archivo original no encontrado en el almacenamiento")
     return FileResponse(
         path,
-        media_type="application/pdf",
+        media_type=doc.mime or "application/pdf",  # el tipo sale de la firma validada al subir, nunca del cliente
         headers={"Content-Disposition": "inline", "X-Content-Type-Options": "nosniff"},
     )
+
+
+@router.get("/documents/{doc_id}/thumbnail")
+def thumbnail(doc_id: uuid.UUID, session: Session = Depends(get_session)):
+    doc = get_doc_or_404(session, doc_id)
+    if doc.media_type != "image":
+        raise HTTPException(404, "Este documento no tiene miniatura")
+    path = storage.thumb_path(doc.id)
+    if not path.exists():
+        raise HTTPException(404, "Miniatura no disponible (el documento aún se está procesando)")
+    return FileResponse(path, media_type="image/jpeg", headers={"Content-Disposition": "inline", "X-Content-Type-Options": "nosniff"})
+
+
+class DescribeIn(BaseModel):
+    question: str = Field(default="¿Qué ves en esta imagen?", min_length=1, max_length=2000)
+
+
+@router.post("/documents/{doc_id}/describe")
+def describe_document(doc_id: uuid.UUID, body: DescribeIn, session: Session = Depends(get_session)):
+    """Pregunta al modelo de visión activo sobre esta imagen («¿qué ves?»). La respuesta es automática y puede equivocarse. Con un servicio
+    externo, la imagen sale de la máquina (solo si el perfil tiene el consentimiento)."""
+    doc = get_doc_or_404(session, doc_id)
+    if doc.media_type != "image":
+        raise HTTPException(422, "Solo se pueden hacer preguntas visuales sobre imágenes")
+    try:
+        res = vision.ask_about_images(session, body.question, [media_ingest.read_original(doc)])
+    except vision.VisionDisabled as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except vision.ImageError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except LLMError as exc:
+        raise HTTPException(502, f"El modelo de visión no pudo responder: {exc}") from exc
+    return {"text": res.text, "model": res.model, "provider": res.provider, "external": res.external, "automatic": True}
 
 
 @router.get("/documents/{doc_id}/pages/{page_number}")
@@ -114,6 +154,21 @@ def get_chunk(chunk_id: int, session: Session = Depends(get_session)):
     if row is None:
         raise HTTPException(404, "Fragmento no encontrado")
     c, filename = row
+    fig = (c.meta or {}).get("figure")
     return ChunkOut(
-        id=c.id, document_id=c.document_id, filename=filename, page_start=c.page_start, page_end=c.page_end, text=c.text
+        id=c.id, document_id=c.document_id, filename=filename, page_start=c.page_start, page_end=c.page_end, text=c.text,
+        modality=c.modality, source=c.source, figure_url=f"/chunks/{c.id}/figure" if fig is not None else None,
     )
+
+
+@router.get("/chunks/{chunk_id}/figure")
+def chunk_figure(chunk_id: int, session: Session = Depends(get_session)):
+    """La figura (imagen incrustada o gráfico) a la que pertenece un fragmento de un PDF, tal como se ve en la página."""
+    c = session.get(DocumentChunk, chunk_id)
+    fig = (c.meta or {}).get("figure") if c is not None else None
+    if c is None or fig is None:
+        raise HTTPException(404, "Este fragmento no tiene figura")
+    path = storage.figure_path(c.document_id, fig)
+    if not path.exists():
+        raise HTTPException(404, "Figura no disponible")
+    return FileResponse(path, media_type="image/jpeg", headers={"Content-Disposition": "inline", "X-Content-Type-Options": "nosniff"})

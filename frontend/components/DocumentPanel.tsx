@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, FileText, FolderPlus, Loader2, RotateCw, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, FolderPlus, ImageIcon, Loader2, RotateCw, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useToast } from "@/components/Toaster";
 import { api, type Collection, type Doc } from "@/lib/api";
@@ -36,11 +36,12 @@ export default function DocumentPanel(p: Props) {
 
   async function upload(files: FileList | File[]) {
     const all = Array.from(files);
-    const pdfs = all.filter((f) => f.name.toLowerCase().endsWith(".pdf") || f.type === "application/pdf");
+    // El navegador solo prefiltra por extensión/tipo; el servidor valida por la FIRMA del archivo.
+    const pdfs = all.filter((f) => /\.(pdf|png|jpe?g|webp)$/i.test(f.name) || /^(application\/pdf|image\/(png|jpeg|webp))$/.test(f.type));
     const rejected = all.length - pdfs.length;
     if (rejected > 0) {
-      toast.warning(rejected === 1 ? "Se omitió 1 archivo que no es PDF" : `Se omitieron ${rejected} archivos que no son PDF`, {
-        description: "PDF Analyst solo admite documentos PDF.",
+      toast.warning(rejected === 1 ? "Se omitió 1 archivo no admitido" : `Se omitieron ${rejected} archivos no admitidos`, {
+        description: "PDF Analyst admite PDF e imágenes PNG, JPEG y WebP.",
       });
     }
     if (pdfs.length === 0) {
@@ -99,10 +100,10 @@ export default function DocumentPanel(p: Props) {
         }}
         className={`m-3 rounded-md border border-dashed px-3 py-4 text-center text-sm ${dragging ? "border-petrol bg-petrol-tint" : "border-line bg-white"}`}
       >
-        <input ref={inputRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={(e) => e.target.files && upload(e.target.files)} />
+        <input ref={inputRef} type="file" accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple hidden onChange={(e) => e.target.files && upload(e.target.files)} />
         <button className="btn-primary" disabled={busy} onClick={() => inputRef.current?.click()}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          Subir PDF
+          Subir PDF o imagen
         </button>
         <p className="mt-2 text-xs text-ink-faint">o arrastre archivos aquí. Se procesan localmente.</p>
       </div>
@@ -180,7 +181,7 @@ export default function DocumentPanel(p: Props) {
             <FileText className="mx-auto mb-2 h-7 w-7 text-line" aria-hidden />
             Aún no hay documentos.
             <br />
-            Suba un PDF para empezar.
+            Suba un PDF o una imagen para empezar.
           </li>
         )}
         {p.docs.map((d) => {
@@ -199,7 +200,14 @@ export default function DocumentPanel(p: Props) {
                 />
                 <button className="min-w-0 flex-1 text-left" onClick={() => p.onOpenDoc(d)} title={d.filename}>
                   <div className="flex items-center gap-1.5">
-                    <FileText className="h-4 w-4 shrink-0 text-ink-faint" aria-hidden />
+                    {d.media_type === "image" && d.status === "ready" ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={api.thumbUrl(d.id)} alt="" className="h-8 w-8 shrink-0 rounded border border-line object-cover" />
+                    ) : d.media_type === "image" ? (
+                      <ImageIcon className="h-4 w-4 shrink-0 text-ink-faint" aria-hidden />
+                    ) : (
+                      <FileText className="h-4 w-4 shrink-0 text-ink-faint" aria-hidden />
+                    )}
                     <span className="truncate text-sm font-medium">{d.filename}</span>
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-faint">
@@ -209,9 +217,14 @@ export default function DocumentPanel(p: Props) {
                       {d.status === "failed" && <AlertTriangle className="mr-1 h-3 w-3" />}
                       {st.label}
                     </span>
-                    <span>{d.page_count ?? "?"} pág.</span>
+                    {d.media_type === "image" ? <span>{d.width}×{d.height}</span> : <span>{d.page_count ?? "?"} pág.</span>}
                     <span>{fmtSize(d.size_bytes)}</span>
                     {!!d.ocr_pages && <span title="Páginas leídas con OCR">OCR {d.ocr_pages}</span>}
+                    {d.media_type === "pdf" && !!d.figure_count && (
+                      <span className="inline-flex items-center gap-0.5" title={`${d.figure_count} figuras detectadas (imágenes y gráficos); ${d.figures_described ?? 0} descritas por el modelo de visión`}>
+                        <ImageIcon className="h-3 w-3" aria-hidden /> {d.figure_count} figura{d.figure_count > 1 ? "s" : ""}{d.figures_described ? ` (${d.figures_described} descritas)` : ""}
+                      </span>
+                    )}
                   </div>
                   {d.error && <p className="mt-1 text-xs text-bad">{d.error}</p>}
                 </button>
@@ -231,8 +244,23 @@ export default function DocumentPanel(p: Props) {
                       <FolderPlus className={`h-4 w-4 ${inCol ? "text-petrol" : ""}`} />
                     </button>
                   )}
-                  {d.status === "failed" && (
-                    <button className="btn-icon" aria-label="Reintentar procesamiento" title="Reintentar" onClick={() => guard(() => api.reprocess(d.id), { title: "Reprocesamiento en cola", description: d.filename })}>
+                  {(d.status === "failed" || d.status === "ready") && (
+                    <button
+                      className="btn-icon"
+                      aria-label={d.status === "failed" ? "Reintentar procesamiento" : "Volver a procesar"}
+                      title={d.status === "failed" ? "Reintentar" : "Volver a procesar: lee de nuevo el texto y las figuras (si hay un modelo de visión, las vuelve a describir)"}
+                      onClick={async () => {
+                        if (d.status === "ready") {
+                          const ok = await toast.confirm({
+                            title: "¿Volver a procesar este documento?",
+                            message: `«${d.filename}» se leerá de nuevo (texto y figuras) y no se podrá consultar hasta terminar. Si hay un modelo de visión activo, cada figura se describirá otra vez (con un servicio externo, eso consume su cuota y envía las imágenes).`,
+                            confirmLabel: "Volver a procesar",
+                          });
+                          if (!ok) return;
+                        }
+                        await guard(() => api.reprocess(d.id), { title: "Reprocesamiento en cola", description: d.filename });
+                      }}
+                    >
                       <RotateCw className="h-4 w-4" />
                     </button>
                   )}

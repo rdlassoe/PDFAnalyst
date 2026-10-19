@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .base import ChatMessage, LLMError, LLMProvider, ProviderConfig, is_local_url
+from .base import ChatMessage, ImagePart, LLMError, LLMProvider, LLMRateLimited, ProviderConfig, is_local_url
 from .ollama import OllamaProvider
 from .openai_compat import OpenAICompatProvider
 
@@ -15,6 +15,6 @@ def build_provider(cfg: ProviderConfig) -> LLMProvider:
 
 
 __all__ = [
-    "ChatMessage", "LLMError", "LLMProvider", "ProviderConfig", "build_provider", "is_local_url",
+    "ChatMessage", "ImagePart", "LLMError", "LLMProvider", "LLMRateLimited", "ProviderConfig", "build_provider", "is_local_url",
     "OllamaProvider", "OpenAICompatProvider",
 ]

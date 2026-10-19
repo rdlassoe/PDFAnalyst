@@ -14,6 +14,15 @@ export interface Doc {
   chunk_count: number | null;
   ocr_pages: number | null;
   warnings: string[];
+  media_type: "pdf" | "image" | "audio" | "video";
+  mime: string | null;
+  width: number | null;
+  height: number | null;
+  duration_ms: number | null;
+  thumbnail_url: string | null;
+  description: string | null; // descripción automática de una imagen (si hay modelo de visión)
+  figure_count: number | null; // figuras detectadas dentro de un PDF
+  figures_described: number | null;
 }
 
 export interface Collection {
@@ -32,6 +41,30 @@ export interface Citation {
   page_end: number | null;
   score: number | null;
   snippet: string | null;
+  modality: string | null;
+  source: string | null; // caption = descripción automática de una imagen; ocr; asr; pdf_text
+  start_ms: number | null;
+  end_ms: number | null;
+}
+
+export interface RelatedMedia {
+  chunk_id: number;
+  document_id: string;
+  filename: string;
+  modality: string;
+  similarity: number | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  page: number | null;
+  figure: number | null; // n.º de figura dentro de un PDF (null = imagen suelta)
+}
+
+export interface ImageAnswer {
+  text: string;
+  model: string;
+  provider: string;
+  external: boolean;
+  automatic: boolean;
 }
 
 export type MsgStatus = "ok" | "abstained" | "unverified" | "error";
@@ -43,7 +76,10 @@ export interface Message {
   status: MsgStatus;
   created_at: string;
   citations: Citation[];
-  meta: { generation?: { provider?: string; model?: string; external?: boolean } };
+  meta: {
+    generation?: { provider?: string; model?: string; external?: boolean; vision?: { images: number; labels: string[] }; vision_error?: string };
+    related_media?: RelatedMedia[];
+  };
 }
 
 export interface Conversation {
@@ -76,6 +112,9 @@ export interface Chunk {
   page_start: number;
   page_end: number;
   text: string;
+  modality?: string;
+  source?: string;
+  figure_url?: string | null; // el fragmento pertenece a una figura de un PDF
 }
 
 export type LlmKind = "ollama" | "openai-compatible";
@@ -127,6 +166,26 @@ export interface LlmProfileInput {
   allow_external?: boolean;
 }
 
+// ---- Modelo de visión (describe imágenes; Gemini, Groq, Ollama…). Mismos perfiles que el LLM pero independientes: otro modelo, desactivado por defecto («none»).
+export interface VisionPreset extends LlmPreset {
+  model: string;
+}
+
+export interface VisionSettings {
+  active: string; // id de perfil o «none»
+  profiles: LlmProfile[];
+  presets: VisionPreset[];
+  answer_with_images: boolean; // responder MIRANDO las figuras con este modelo
+}
+
+export interface VisionImageTest {
+  ok: boolean;
+  detail: string;
+  description: string | null;
+  external: boolean | null;
+  model?: string;
+}
+
 export type EmbedKind = "sentence-transformers" | "ollama" | "openai-compatible";
 
 export interface EmbedProfile {
@@ -147,6 +206,8 @@ export interface EmbedProfile {
   dimensions: number | null;
   /** Umbral coseno de relevancia propio de este modelo (null = el global del servidor). */
   min_similarity: number | null;
+  /** El servicio (local) embebe imágenes, audio y vídeo. */
+  supports_media: boolean;
 }
 
 export interface EmbedPreset {
@@ -159,6 +220,7 @@ export interface EmbedPreset {
   passage_prefix: string;
   dimensions: number | null;
   min_similarity: number | null;
+  supports_media: boolean;
   needs_key: boolean;
   key_url: string | null;
   note: string;
@@ -222,6 +284,7 @@ export interface EmbedProfileInput {
   passage_prefix?: string;
   dimensions?: number | null;
   min_similarity?: number | null;
+  supports_media?: boolean;
 }
 
 /** Réplica de la regla del servidor solo para decidir si mostrar el aviso de consentimiento (el servidor es quien decide). */
@@ -283,6 +346,9 @@ export const api = {
   deleteDocument: (id: string) => req<void>(`/documents/${id}`, { method: "DELETE" }),
   reprocess: (id: string) => req<unknown>(`/documents/${id}/reprocess`, { method: "POST" }),
   fileUrl: (id: string) => `${API}/documents/${id}/file`,
+  thumbUrl: (id: string) => `${API}/documents/${id}/thumbnail`,
+  figureUrl: (chunkId: number) => `${API}/chunks/${chunkId}/figure`,
+  describeDoc: (id: string, question: string) => req<ImageAnswer>(`/documents/${id}/describe`, json("POST", { question })),
   chunk: (id: number) => req<Chunk>(`/chunks/${id}`),
   collections: () => req<Collection[]>("/collections"),
   createCollection: (name: string) => req<Collection>("/collections", json("POST", { name })),
@@ -301,6 +367,15 @@ export const api = {
   setActiveLlm: (profile_id: string) => req<LlmSettings>("/settings/llm/active", json("PUT", { profile_id })),
   testLlm: (body: { profile_id?: string | null; kind?: LlmKind; base_url?: string; api_key?: string | null }) =>
     req<LlmTestResult>("/settings/llm/test", json("POST", body)),
+  visionSettings: () => req<VisionSettings>("/settings/vision"),
+  createVisionProfile: (body: LlmProfileInput) => req<VisionSettings>("/settings/vision/profiles", json("POST", body)),
+  updateVisionProfile: (id: string, body: Partial<LlmProfileInput>) => req<VisionSettings>(`/settings/vision/profiles/${id}`, json("PATCH", body)),
+  deleteVisionProfile: (id: string) => req<VisionSettings>(`/settings/vision/profiles/${id}`, { method: "DELETE" }),
+  setActiveVision: (profile_id: string) => req<VisionSettings>("/settings/vision/active", json("PUT", { profile_id })),
+  setVisionAnswer: (enabled: boolean) => req<VisionSettings>("/settings/vision/answer", json("PUT", { enabled })),
+  testVision: (body: { profile_id?: string | null; kind?: LlmKind; base_url?: string; api_key?: string | null }) =>
+    req<LlmTestResult>("/settings/vision/test", json("POST", body)),
+  testVisionImage: (profile_id: string) => req<VisionImageTest>("/settings/vision/test-image", json("POST", { profile_id })),
   embedSettings: () => req<EmbedSettings>("/settings/embeddings"),
   createEmbedProfile: (body: EmbedProfileInput) => req<EmbedSettings>("/settings/embeddings/profiles", json("POST", body)),
   updateEmbedProfile: (id: string, body: Partial<EmbedProfileInput>) =>

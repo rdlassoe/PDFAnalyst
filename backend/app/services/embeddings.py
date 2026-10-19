@@ -63,6 +63,7 @@ class EmbedderConfig:
     passage_prefix: str = ""
     dimensions: int | None = None  # truncado Matryoshka (solo modelos MRL); se envía al servidor y se aplica también aquí
     min_similarity: float | None = None  # umbral coseno de relevancia de este modelo (None = RETRIEVAL_MIN_SIMILARITY)
+    supports_media: bool = False  # el servicio sabe embeber imágenes/audio/vídeo (`/media/embeddings`); solo se usa si es LOCAL
     batch_size: int = 32
     timeout_s: float = 60.0
     device: str = "cpu"
@@ -79,7 +80,7 @@ class EmbedderConfig:
     def cache_key(self) -> tuple:
         key_hash = hashlib.sha256(self.api_key.encode()).hexdigest()[:16] if self.api_key else ""
         return (self.kind, self.model, self.base_url, key_hash, self.query_prefix, self.passage_prefix,
-                self.dimensions, self.min_similarity, self.batch_size, self.device)
+                self.dimensions, self.min_similarity, self.supports_media, self.batch_size, self.device)
 
 
 def check_external_allowed(cfg: EmbedderConfig) -> None:
@@ -102,10 +103,17 @@ class Embedder(ABC):
     passage_prefix: str
     external: bool = False
     min_similarity: float | None = None
+    supports_media: bool = False  # ¿embebe imágenes, audio y vídeo? (solo el servicio local de EmbeddingGemma 2)
 
     @property
     @abstractmethod
     def dimension(self) -> int: ...
+
+    def embed_media(self, items: list[dict]) -> np.ndarray:
+        """Vectores de medios (imagen/audio/fotogramas de vídeo) por REFERENCIA a archivos del almacenamiento. Solo si `supports_media`."""
+        raise EmbeddingError(
+            f"El modelo de embeddings activo ({self.name}) no admite imágenes, audio ni vídeo. Active «EmbeddingGemma 2 (local)» en Ajustes.", permanent=True
+        )
 
     @abstractmethod
     def _encode(self, texts: list[str]) -> np.ndarray: ...
@@ -181,6 +189,8 @@ class _HttpEmbedder(Embedder):
         self.query_prefix = cfg.query_prefix
         self.passage_prefix = cfg.passage_prefix
         self.min_similarity = cfg.min_similarity
+        # Los medios (voz, caras, documentos…) NUNCA salen de la máquina: un servicio externo no los recibe aunque el perfil lo marque.
+        self.supports_media = bool(cfg.supports_media) and not self.external
         self._base = cfg.base_url.rstrip("/")
         self._transport = transport
         self._dim: int | None = None
@@ -201,8 +211,8 @@ class _HttpEmbedder(Embedder):
             self._dim = int(self._encode(["dimension probe"]).shape[1])
         return self._dim
 
-    def _post_json(self, payload: dict) -> dict:
-        url = f"{self._base}{self.path}"
+    def _post_json(self, payload: dict, path: str | None = None) -> dict:
+        url = f"{self._base}{path or self.path}"
         host = urlparse(self._base).netloc
         attempts = 4
         for attempt in range(attempts):
@@ -306,6 +316,17 @@ class OpenAICompatEmbedder(_HttpEmbedder):
         items = sorted(data["data"], key=lambda d: d.get("index", 0))
         return [it["embedding"] for it in items]
 
+    def embed_media(self, items: list[dict]) -> np.ndarray:
+        """`items`: {"modality": "image"|"audio"|"video", "path": …} (o "paths" para vídeo), rutas dentro del almacenamiento compartido con el servicio."""
+        if not self.supports_media:
+            return super().embed_media(items)
+        data = self._post_json({"items": items}, path="/media/embeddings")
+        try:
+            arr = np.array(self._parse(data), dtype=np.float32)
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise EmbeddingError("Respuesta del servicio de medios con un formato inesperado") from exc
+        return self._check(arr, len(items))
+
 
 # ---------------------------------------------------------------------------------------------- fábrica y caché
 _CACHE: dict[tuple, Embedder] = {}
@@ -375,6 +396,7 @@ def get_or_create_model_row(session: Session, embedder: Embedder) -> EmbeddingMo
             query_prefix=embedder.query_prefix,
             passage_prefix=embedder.passage_prefix,
             normalize=True,
+            supports_media=embedder.supports_media,
         )
         session.add(row)
         session.flush()
@@ -388,4 +410,7 @@ def get_or_create_model_row(session: Session, embedder: Embedder) -> EmbeddingMo
             "Los prefijos de consulta/pasaje difieren de los usados al indexar este modelo; los vectores existentes "
             "serían incompatibles. Restaure los prefijos originales o elimine los vectores de ese modelo en Ajustes."
         )
+    if row.supports_media != embedder.supports_media:  # la capacidad del perfil puede cambiar sin invalidar vectores
+        row.supports_media = embedder.supports_media
+        session.flush()
     return row

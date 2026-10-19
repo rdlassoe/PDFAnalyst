@@ -28,6 +28,7 @@ class ProfileIn(BaseModel):
     passage_prefix: str = Field(default="", max_length=200)
     dimensions: int | None = Field(default=None, ge=8, le=8192)
     min_similarity: float | None = Field(default=None, gt=0, le=1)
+    supports_media: bool = False  # servicio local de EmbeddingGemma 2: admite imágenes, audio y vídeo
 
 
 class ProfilePatch(BaseModel):
@@ -42,6 +43,7 @@ class ProfilePatch(BaseModel):
     passage_prefix: str | None = Field(default=None, max_length=200)
     dimensions: int | None = Field(default=None, ge=8, le=8192)
     min_similarity: float | None = Field(default=None, gt=0, le=1)  # null explícito = volver al umbral global
+    supports_media: bool | None = None
 
 
 class ProfileRef(BaseModel):

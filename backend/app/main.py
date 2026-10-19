@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .api import chat, collections, documents, embeddings_settings, settings, system
+from .api import chat, collections, documents, embeddings_settings, settings, system, vision_settings
 from .config import get_settings
 from .providers import LLMError
 
@@ -26,5 +26,5 @@ async def llm_error_handler(_: Request, exc: LLMError):
     return JSONResponse(status_code=502, content={"detail": str(exc)})
 
 
-for r in (system.router, documents.router, collections.router, chat.router, settings.router, embeddings_settings.router):
+for r in (system.router, documents.router, collections.router, chat.router, settings.router, embeddings_settings.router, vision_settings.router):
     app.include_router(r)

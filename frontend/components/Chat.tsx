@@ -12,6 +12,7 @@ interface Props {
   scopeLabel: string;
   readyCount: number;
   onOpenCitation: (c: Citation) => void;
+  onOpenMedia: (documentId: string, filename: string, page?: number | null, chunkId?: number) => void; // abrir una imagen/figura relacionada en el visor
   activeCitation: string | null; // id del chunk abierto en el visor
 }
 
@@ -297,6 +298,9 @@ export default function Chat(props: Props) {
                               <div className="flex items-center gap-2 text-xs">
                                 <span className="font-semibold text-petrol">{c.label}</span>
                                 <span className="min-w-0 flex-1 truncate font-medium">{c.filename ?? "Documento eliminado"}</span>
+                                {c.source === "caption" && <span className="badge shrink-0 bg-amber-50 text-warn" title="Texto generado por un modelo de visión: puede equivocarse">descripción automática</span>}
+                                {c.source === "ocr" && <span className="badge shrink-0 bg-panel text-ink-soft" title="Texto leído de la imagen con OCR">OCR</span>}
+                                {c.source === "figure_image" && <span className="badge shrink-0 bg-amber-50 text-warn" title="Figura adjunta al modelo de visión: la interpretó una máquina">imagen adjunta</span>}
                                 <span className="shrink-0 text-ink-faint">
                                   {c.page_start != null && (c.page_start === c.page_end ? `p. ${c.page_start}` : `pp. ${c.page_start}-${c.page_end}`)}
                                 </span>
@@ -308,11 +312,37 @@ export default function Chat(props: Props) {
                       </ul>
                     </div>
                   )}
+                  {!!m.meta?.related_media?.length && (
+                    <div className="mt-3 border-t border-line pt-2">
+                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-ink-faint">Medios relacionados</div>
+                      <ul className="flex flex-wrap gap-2">
+                        {m.meta.related_media.map((r) => (
+                          <li key={r.chunk_id}>
+                            <button
+                              onClick={() => props.onOpenMedia(r.document_id, r.filename, r.figure != null ? r.page : null, r.figure != null ? r.chunk_id : undefined)}
+                              title={`${r.filename}${r.similarity != null ? ` · similitud ${r.similarity.toFixed(2)}` : ""}`}
+                              className="group/m block w-24 overflow-hidden rounded-md border border-line bg-white text-left transition-colors hover:border-petrol focus-visible:outline focus-visible:outline-2 focus-visible:outline-petrol"
+                            >
+                              {r.modality === "image" ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={r.figure != null ? api.figureUrl(r.chunk_id) : api.thumbUrl(r.document_id)} alt={r.filename} className="h-16 w-24 object-cover" />
+                              ) : (
+                                <div className="flex h-16 w-24 items-center justify-center bg-panel text-xs text-ink-faint">{r.modality}</div>
+                              )}
+                              <div className="truncate px-1.5 py-1 text-[11px] text-ink-soft">{r.figure != null && r.page ? `p. ${r.page} · ` : ""}{r.filename}</div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1 text-[11px] text-ink-faint">Coinciden por similitud con su pregunta; el sistema no afirma nada sobre su contenido. Ábralos para comprobarlo.</p>
+                    </div>
+                  )}
                   <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-faint">
                     {m.meta?.generation?.model && (
                       <span className="min-w-0 flex-1 truncate">
                         {m.meta.generation.provider} · {m.meta.generation.model}
-                        {m.meta.generation.external && " · contexto enviado a un servicio externo"}
+                        {m.meta.generation.vision && ` · respondió mirando ${m.meta.generation.vision.images} imagen${m.meta.generation.vision.images > 1 ? "es" : ""}`}
+                        {m.meta.generation.external && (m.meta.generation.vision ? " · pregunta, fragmentos e imágenes enviados a un servicio externo" : " · contexto enviado a un servicio externo")}
                       </span>
                     )}
                     {m.status !== "error" && (

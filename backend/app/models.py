@@ -39,6 +39,9 @@ def _created() -> Mapped[datetime]:
 
 # Estados de documento y de job (cadenas simples + CHECK, más fáciles de migrar que ENUM nativos)
 DOC_STATUSES = ("uploaded", "processing", "ready", "failed")
+MEDIA_TYPES = ("pdf", "image", "audio", "video")
+CHUNK_MODALITIES = ("text", "image", "audio", "video", "page_image")
+CHUNK_SOURCES = ("pdf_text", "ocr", "asr", "caption", "media")
 JOB_STATUSES = ("queued", "running", "done", "failed")
 JOB_KINDS = ("ingest", "embed")
 
@@ -47,6 +50,7 @@ class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
         CheckConstraint(f"status IN {DOC_STATUSES}", name="ck_documents_status"),
+        CheckConstraint(f"media_type IN {MEDIA_TYPES}", name="ck_documents_media_type"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -55,6 +59,11 @@ class Document(Base):
     storage_name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)  # <uuid>.pdf
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     page_count: Mapped[int | None] = mapped_column(Integer)
+    media_type: Mapped[str] = mapped_column(String(16), default="pdf", server_default="pdf", nullable=False)  # pdf | image | audio | video
+    mime: Mapped[str | None] = mapped_column(String(64))
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
     title: Mapped[str | None] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="uploaded", nullable=False)
@@ -92,6 +101,9 @@ class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (
         UniqueConstraint("document_id", "chunk_index", name="uq_chunks_doc_idx"),
+        CheckConstraint(f"modality IN {CHUNK_MODALITIES}", name="ck_chunks_modality"),
+        CheckConstraint(f"source IN {CHUNK_SOURCES}", name="ck_chunks_source"),
+        CheckConstraint("start_ms IS NULL OR end_ms IS NULL OR end_ms > start_ms", name="ck_chunks_time_order"),
         Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
         Index("ix_chunks_document", "document_id"),
     )
@@ -103,7 +115,12 @@ class DocumentChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     page_start: Mapped[int] = mapped_column(Integer, nullable=False)
     page_end: Mapped[int] = mapped_column(Integer, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)  # vacío en los fragmentos «de vectores» de un medio (imagen/audio/vídeo)
+    modality: Mapped[str] = mapped_column(String(16), default="text", server_default="text", nullable=False)  # text | image | audio | video | page_image
+    source: Mapped[str] = mapped_column(String(16), default="pdf_text", server_default="pdf_text", nullable=False)  # pdf_text | ocr | asr | caption | media
+    start_ms: Mapped[int | None] = mapped_column(Integer)  # audio/vídeo: tramo de tiempo
+    end_ms: Mapped[int | None] = mapped_column(Integer)
+    meta: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)  # p. ej. modelo que generó una descripción
     # Columna generada: 'simple' + f_unaccent (sin tildes, sin stemming). Se concatenan los tokens originales
     # y los normalizados (separadores -/_.,;:@# -> espacio) porque el parser parte «ISO-27001» en 'iso'+'-27001'.
     tsv = mapped_column(
@@ -128,6 +145,7 @@ class EmbeddingModel(Base):
     query_prefix: Mapped[str] = mapped_column(Text, default="", nullable=False)
     passage_prefix: Mapped[str] = mapped_column(Text, default="", nullable=False)
     normalize: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    supports_media: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)  # ¿embebe imágenes/audio/vídeo?
     created_at: Mapped[datetime] = _created()
 
 
@@ -235,6 +253,10 @@ class MessageCitation(Base):
     page_start: Mapped[int | None] = mapped_column(Integer)
     page_end: Mapped[int | None] = mapped_column(Integer)
     snapshot: Mapped[str | None] = mapped_column(Text)  # texto del chunk al momento de responder
+    modality: Mapped[str | None] = mapped_column(String(16))
+    source: Mapped[str | None] = mapped_column(String(16))
+    start_ms: Mapped[int | None] = mapped_column(Integer)
+    end_ms: Mapped[int | None] = mapped_column(Integer)
 
     message: Mapped[Message] = relationship(back_populates="citations")
 
@@ -284,6 +306,29 @@ class LLMProfile(Base):
     )
 
 
+VISION_KINDS = ("ollama", "openai-compatible")
+
+
+class VisionProfile(Base):
+    """Modelo de visión (descripción de imágenes) configurado desde Ajustes. Mismos controles que `LLMProfile`: clave API CIFRADA y consentimiento
+    explícito para destinos externos (las IMÁGENES saldrían de la máquina). Es independiente del modelo de chat: se puede usar la misma cuenta con otro modelo."""
+
+    __tablename__ = "vision_profiles"
+    __table_args__ = (CheckConstraint(f"kind IN {VISION_KINDS}", name="ck_vision_profiles_kind"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String(256), nullable=False)
+    api_key_enc: Mapped[str | None] = mapped_column(Text)
+    allow_external: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class AppSetting(Base):
     """Ajustes no secretos clave/valor (p. ej. el proveedor LLM activo)."""
 
@@ -319,6 +364,7 @@ class EmbeddingProfile(Base):
     passage_prefix: Mapped[str] = mapped_column(Text, default="", nullable=False)
     dimensions: Mapped[int | None] = mapped_column(Integer)  # truncado Matryoshka opcional (solo modelos MRL)
     min_similarity: Mapped[float | None] = mapped_column(Float)  # umbral coseno de relevancia de ESTE modelo (None = el global)
+    supports_media: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)  # servicio local de EmbeddingGemma 2: imágenes/audio/vídeo
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

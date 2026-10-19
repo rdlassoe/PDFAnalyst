@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import httpx
 
-from .base import ChatMessage, LLMError, LLMProvider, ProviderConfig, check_external_allowed, is_local_url  # noqa: F401
+from .base import ChatMessage, LLMError, LLMProvider, LLMRateLimited, ProviderConfig, check_external_allowed, is_local_url  # noqa: F401
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -32,10 +32,18 @@ class OpenAICompatProvider(LLMProvider):
     def _client(self) -> httpx.Client:
         return httpx.Client(timeout=self._timeout, transport=self._transport, headers=self._headers())
 
+    @staticmethod
+    def _message(m: ChatMessage) -> dict:
+        if not m.images:
+            return {"role": m.role, "content": m.content}
+        parts: list[dict] = [{"type": "text", "text": m.content}]  # formato de visión de OpenAI (también lo aceptan Gemini y Groq)
+        parts += [{"type": "image_url", "image_url": {"url": f"data:{img.mime};base64,{img.b64()}"}} for img in m.images]
+        return {"role": m.role, "content": parts}
+
     def chat(self, messages: list[ChatMessage], *, temperature: float, max_tokens: int) -> str:
         payload = {
             "model": self.model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [self._message(m) for m in messages],
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
@@ -48,7 +56,11 @@ class OpenAICompatProvider(LLMProvider):
             if r.status_code == 404:
                 raise LLMError(f"Modelo o ruta no encontrados en el proveedor (modelo '{self.model}')")
             if r.status_code == 429:
-                raise LLMError("El proveedor limitó las peticiones (429); reintente en unos instantes")
+                try:
+                    wait = float(r.headers.get("retry-after", ""))
+                except ValueError:
+                    wait = None
+                raise LLMRateLimited("El proveedor limitó las peticiones (429); reintente en unos instantes", wait)
             r.raise_for_status()
             return (r.json()["choices"][0]["message"]["content"] or "").strip()
         except LLMError:

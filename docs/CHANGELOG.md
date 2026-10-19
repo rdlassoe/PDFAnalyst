@@ -105,6 +105,36 @@ El usuario corrigió la decisión anterior: EmbeddingGemma 2 debe ejecutarse **l
   vez de cuatro ejecuciones y pasa al repetir: depende del planificador, no del cambio.
 - **No verificado:** que la ventaja sobre e5 se mantenga con otros documentos (un solo libro de 121 páginas); rendimiento de `bfloat16` en CPU; uso con GPU; el tiempo de indexación de colecciones grandes (≈3 fragmentos/s).
 
+## Imágenes y modelo de visión (Fases 0–2 del plan multimodal)
+
+Decisiones del usuario: orden imágenes → audio → vídeo; añadir Whisper; el sistema debe **decir qué ve** en las imágenes; modelo de visión por API con **Gemini y Groq**, configurables desde Ajustes. (Audio, vídeo y Whisper aún sin implementar.)
+
+- **Fase 0 (medido en esta máquina, CPU, fp32):** el vector de texto es idéntico con y sin los codificadores de visión/audio (coseno ≥ 0,9999: los vectores de texto existentes siguen valiendo); memoria pico solo texto 2,0 GB · +imagen 3,0 · +audio 3,7 · completo 4,7;
+  imagen 3,3 s (280 tokens) / 1,5 s (140) / 0,7 s (70); audio de 30 s en 2,4 s; vídeo 1,5 s por fotograma. **bfloat16 es 3–7× más lento** en esta CPU (sin AVX-512/AMX): se usa float32.
+- **Servicio `embedder` multimodal:** modos por modalidad (carga solo los codificadores necesarios, libera el modelo anterior antes de cargar el nuevo, vuelve a solo texto tras 300 s sin uso), `POST /v1/media/embeddings` por referencia a archivos, validación de rutas
+  (sin `..`, sin enlaces simbólicos que salgan de la raíz), límites de tamaño/píxeles/audio/fotogramas y errores sin detalles internos. 27 pruebas nuevas (5 con el modelo real).
+- **Imágenes de extremo a extremo:** migraciones `0005`/`0006`; subida por firma (PNG, JPEG, WebP; no SVG ni GIF), miniatura sin EXIF, OCR, descripción automática, vector de medio; un fragmento por cada uno; modelos que no admiten medios los omiten sin dejar el documento «pendiente»;
+  búsqueda con umbral propio para medios; el LLM de texto solo recibe fragmentos con texto (descripción etiquetada como automática) y las imágenes sin texto salen como «Medios relacionados» sin afirmaciones; citas con modalidad/origen; API de archivo, miniatura y «¿qué ves?».
+- **Modelo de visión configurable (Ajustes):** perfiles propios con clave cifrada y consentimiento, `none` por defecto, plantillas Gemini/Groq/Ollama, «Probar con una imagen de prueba», reintentos ante 429 con `Retry-After`. Las imágenes se reducen y se recodifican sin EXIF antes de enviarse.
+- **Verificado de extremo a extremo con el modelo real:** una imagen sintética se indexó en 22 s (el servicio pasó a modo imagen, 3,0 GiB); la búsqueda «una imagen con un círculo rojo…» la encontró con similitud 0,74; «gato durmiendo en un sofá» no devolvió nada; las consultas sobre los PDF no cambiaron; el chat devolvió
+  la imagen como medio relacionado sin llamar al LLM. 331 pruebas automáticas.
+- **No verificado:** Gemini y Groq reales (sin claves; adaptadores probados con transportes simulados), calidad de las descripciones en español, el umbral con imágenes reales variadas (0,65 es provisional), Whisper y todo lo de audio/vídeo, imágenes dentro de PDF.
+- Defecto encontrado al integrar: crear la carpeta de miniaturas como efecto secundario del borrado dejaba basura en el almacenamiento de pruebas; el borrado ya no la crea.
+
+## Figuras dentro de los PDF (corrección de prioridad: el sistema solo recibe PDF)
+
+El usuario aclaró que el sistema recibe únicamente PDF y que sus imágenes deben detectarse, verse y usarse para responder; hasta entonces un PDF con imágenes no las leía (el extractor las ignoraba). Se implementó en este orden:
+
+- **Análisis previo con PDF reales (solo lectura):** `Analitica Prescriptiva.pdf` = 12 páginas que son una imagen a página completa (sin texto); `Parcial 3 - Sol Telco.pdf` = 40 imágenes (una de página completa repetida en 10 páginas, es fondo) y 9 páginas con gráficos vectoriales de 67–502 trazos;
+  `manual-cassandra.pdf` = 7 figuras y 10 páginas con ≥ 30 trazos; `book-attachment` = 7 figuras relevantes de 29. De ahí los filtros: conservar páginas enteras que son imagen, descartar repetidas en ≥ 3 páginas, tamaño mínimo, y renderizar los gráficos vectoriales.
+- **Detector y renderizado** (`pdf_figures.py`), **ingesta** (OCR por figura, descripción con el modelo de visión, vector; fragmentos con página y posición; descripción única de imágenes idénticas; latido del trabajo; corte tras 429 agotado o 3 fallos sin romper la ingesta),
+  **respuesta mirando las figuras** (adjunta hasta 3 figuras al modelo de visión, con reintentos ante 429 y respaldo al LLM de texto), **API** (`/chunks/{id}/figure`, contadores por documento), **interfaz** (tarjeta de figura citada, miniaturas, «Volver a procesar», interruptor en Ajustes).
+- **Cambio de comportamiento:** un PDF escaneado sin OCR antes fallaba («No se extrajo texto»); ahora se indexa por la figura de su página con un aviso (sin texto ni modelo de visión no se podrá responder con su contenido). Un PDF solo de imágenes (diapositivas) ya funciona.
+- **Verificado de extremo a extremo con modelos reales:** PDF sintético de 2 páginas (gráfico de barras y foto): 2 figuras detectadas y descritas por Groq (`qwen/qwen3.8-27b`) en 33 s; «¿qué muestra el gráfico y qué trimestre tuvo más ventas?» respondida **mirando la imagen** («Q3 con 420»), con citas [C1] al texto
+  del PDF y [C2] a la figura; el modelo recibió 1 imagen; consulta ajena sin resultados. 359 pruebas automáticas (28 nuevas de figuras, con OCR real y PDF construidos con figuras, logos repetidos, iconos y gráficos vectoriales).
+- Defecto de mis pruebas, no del sistema: el helper procesaba el trabajo `embed` de un documento anterior en lugar del `ingest` del actual.
+- **No verificado:** calidad con los PDF reales del usuario (no se subieron: enviarían su contenido a Groq sin que lo hubiera pedido), Gemini real, umbrales de detección con más tipos de PDF, rendimiento con 60 figuras (se estima ≈3 min de CPU y ≈1–6 min de API).
+
 ## Configuración y documentación
 
 - El `docker-compose.yml` ahora pasa a los contenedores todos los parámetros ajustables (antes solo algunos, de modo que, p. ej.,

@@ -28,13 +28,14 @@ interface Draft {
   passage_prefix: string;
   dimensions: string;
   min_similarity: string;
+  supports_media: boolean;
 }
 
 const fromPreset = (p?: EmbedPreset): Draft => ({
   id: null, active: false, presetId: p?.id ?? "", name: p && !p.id.startsWith("custom") ? p.label : "", kind: p?.kind ?? "openai-compatible",
   base_url: p?.base_url ?? "", model: p?.model ?? "", api_key: "", clear_api_key: false, allow_external: false, hasKey: false, keyHint: null,
   query_prefix: p?.query_prefix ?? "", passage_prefix: p?.passage_prefix ?? "", dimensions: p?.dimensions ? String(p.dimensions) : "",
-  min_similarity: p?.min_similarity != null ? String(p.min_similarity) : "",
+  min_similarity: p?.min_similarity != null ? String(p.min_similarity) : "", supports_media: !!p?.supports_media,
 });
 
 function host(url: string) {
@@ -133,7 +134,7 @@ export default function EmbeddingSettingsPanel() {
       id: p.id, active: p.active, presetId: "", name: p.name, kind: p.kind === "sentence-transformers" ? "openai-compatible" : p.kind,
       base_url: p.base_url, model: p.model, api_key: "", clear_api_key: false, allow_external: p.allow_external, hasKey: p.has_key,
       keyHint: p.key_hint, query_prefix: p.query_prefix, passage_prefix: p.passage_prefix, dimensions: p.dimensions ? String(p.dimensions) : "",
-      min_similarity: p.min_similarity != null ? String(p.min_similarity) : "",
+      min_similarity: p.min_similarity != null ? String(p.min_similarity) : "", supports_media: p.supports_media,
     });
   }
 
@@ -169,6 +170,7 @@ export default function EmbeddingSettingsPanel() {
     const body = {
       name: draft.name, kind: draft.kind, base_url: draft.base_url, model: draft.model, allow_external: external ? draft.allow_external : false,
       query_prefix: draft.query_prefix, passage_prefix: draft.passage_prefix, dimensions: dm, min_similarity: sm,
+      supports_media: external ? false : draft.supports_media, // los medios nunca salen de la máquina
     };
     const view = await run("save", async () => {
       return draft.id
@@ -235,6 +237,7 @@ export default function EmbeddingSettingsPanel() {
                   {p.base_url && <> · {host(p.base_url)}</>} · modelo <span className="font-medium text-ink">{p.model}</span>
                   {p.dimensions ? <> · {p.dimensions} dim.</> : null}
                   {p.min_similarity != null ? <> · umbral {String(p.min_similarity).replace(".", ",")}</> : null}
+                  {p.supports_media ? <> · imágenes, audio y vídeo</> : null}
                 </div>
                 {(p.query_prefix || p.passage_prefix) && (
                   <div className="mt-0.5 truncate text-[11px] text-ink-faint" title={`${p.query_prefix} / ${p.passage_prefix}`}>
@@ -391,6 +394,19 @@ export default function EmbeddingSettingsPanel() {
                 se puede cambiar con el proveedor activo y rige de inmediato, sin reindexar. Calíbrelo con <code>python -m app.evaluate</code>.
               </p>
             </div>
+            {!external && (
+              <div className="sm:col-span-2">
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" className="mt-0.5 accent-petrol" checked={draft.supports_media} onChange={(e) => setDraft({ ...draft, supports_media: e.target.checked })} />
+                  <span>
+                    Este servicio local admite <strong>imágenes, audio y vídeo</strong> (el servicio «embedder» de EmbeddingGemma 2)
+                    <span className="block text-xs text-ink-faint">
+                      Permite encontrar imágenes con una pregunta en texto. Los medios solo se envían a servicios locales: con un servicio externo esta opción no se aplica. Se puede cambiar con el proveedor activo.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
 
           {probe?.forId === "draft" && (

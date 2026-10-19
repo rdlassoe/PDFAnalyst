@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 
@@ -12,10 +13,30 @@ class LLMError(Exception):
     """Fallo del proveedor (red, modelo ausente, respuesta inválida). Nunca debe tumbar la API."""
 
 
+class LLMRateLimited(LLMError):
+    """El proveedor limitó las peticiones (HTTP 429). `retry_after`: segundos que indicó el proveedor, si los indicó."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+@dataclass(frozen=True)
+class ImagePart:
+    """Una imagen para un modelo con visión (bytes ya reducidos por la capa de visión)."""
+
+    data: bytes = field(repr=False)
+    mime: str = "image/jpeg"
+
+    def b64(self) -> str:
+        return base64.b64encode(self.data).decode("ascii")
+
+
 @dataclass(frozen=True)
 class ChatMessage:
     role: str  # "system" | "user" | "assistant"
     content: str
+    images: tuple[ImagePart, ...] = ()  # solo mensajes de usuario y solo con un modelo de visión
 
 
 class LLMProvider(ABC):

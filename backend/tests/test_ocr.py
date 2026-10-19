@@ -42,9 +42,21 @@ def test_scanned_pdf_full_pipeline_is_searchable(ocr_on, session, embedder):
 
 def test_scanned_pdf_without_ocr_fails_with_clear_message(monkeypatch, session):
     monkeypatch.setattr(get_settings(), "ocr_enabled", False)
+    monkeypatch.setattr(get_settings(), "pdf_figures_enabled", False)  # sin figuras ni OCR no hay nada que leer
     doc = register_upload(session, "escaneado.pdf", make_scanned_pdf(TEXT)).document
     while process_one(session):
         pass
     session.expire_all()
     d = session.get(type(doc), doc.id)
     assert d.status == "failed" and "OCR" in d.error
+
+
+def test_scanned_pdf_without_ocr_is_indexed_through_its_page_image_with_a_warning(monkeypatch, session):
+    """Con las figuras activadas, la página escaneada es una figura: se vectoriza (y se puede describir con un modelo de visión) en lugar de fallar."""
+    monkeypatch.setattr(get_settings(), "ocr_enabled", False)
+    doc = register_upload(session, "escaneado.pdf", make_scanned_pdf(TEXT)).document
+    assert process_one(session)
+    session.expire_all()
+    d = session.get(type(doc), doc.id)
+    assert d.status == "processing" and d.meta["figures"]["count"] == 1
+    assert any("No se extrajo texto del PDF" in w and "solo se indexaron sus figuras" in w for w in d.meta["warnings"])

@@ -38,6 +38,24 @@ class Settings(BaseSettings):
     embedding_allow_external: bool = False  # consentimiento para un Ollama remoto del perfil «entorno» (envía el texto de los documentos)
     embedding_timeout_s: float = 120.0
 
+    # --- Medios (imágenes; audio y vídeo en fases posteriores) ---
+    media_max_image_mb: int = 20
+    media_max_pixels: int = 40_000_000  # contra bombas de descompresión (≈ 40 megapíxeles)
+    media_thumb_px: int = 320  # lado mayor de las miniaturas
+    vision_max_side: int = 1568  # las imágenes se reducen a este lado mayor antes de enviarlas al modelo de visión
+    vision_max_tokens: int = 500
+    vision_retries: int = 3  # ante límites de tasa (429) del proveedor
+
+    # --- Figuras dentro de PDF (imágenes incrustadas y gráficos vectoriales) ---
+    pdf_figures_enabled: bool = True
+    pdf_figures_max: int = 60  # por documento (las más grandes primero); cada una cuesta OCR, vector y, con modelo de visión, una descripción
+    pdf_figure_min_px: int = 100  # lado menor mínimo de una imagen incrustada
+    pdf_figure_min_area: float = 0.02  # fracción mínima de la página
+    pdf_figure_repeat_pages: int = 3  # una imagen en ≥ N páginas es fondo/logo y se ignora
+    pdf_vector_min_paths: int = 40  # trazos vectoriales para considerar un gráfico
+    pdf_vector_min_area: float = 0.15
+    vision_answer_max_images: int = 3  # figuras que se adjuntan al modelo de visión al responder
+
     # --- OCR ---
     ocr_enabled: bool = True
     ocr_langs: str = "spa+eng"
@@ -52,6 +70,7 @@ class Settings(BaseSettings):
     retrieval_candidates: int = 30  # candidatos por rama (vector / texto)
     retrieval_top_k: int = 6
     retrieval_min_similarity: float = 0.80  # coseno; CALIBRAR con eval/ (E5 comprime scores altos)
+    retrieval_min_similarity_media: float = 0.65  # coseno texto→imagen/audio/vídeo (otra escala que texto→texto); medido con imágenes sintéticas: correctas 0,74-0,84, ajenas ≤ 0,62. CALIBRAR con imágenes reales
     retrieval_fts_min_coverage: float = 0.5  # fracción de términos de la pregunta presentes
     retrieval_common_term_ratio: float = 0.10  # un término en > ratio·N fragmentos es «común» y no guía la búsqueda textual
     rrf_k: int = 60

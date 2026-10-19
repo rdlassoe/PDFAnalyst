@@ -22,7 +22,7 @@ class OllamaProvider(LLMProvider):
         payload = {
             "model": self.model,
             "stream": False,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [self._message(m) for m in messages],
             "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192},
         }
         if self._no_think:
@@ -47,6 +47,13 @@ class OllamaProvider(LLMProvider):
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             raise LLMError(f"Respuesta inválida de Ollama: {exc}") from exc
         return content or ""
+
+    @staticmethod
+    def _message(m: ChatMessage) -> dict:
+        out: dict = {"role": m.role, "content": m.content}
+        if m.images:  # Ollama recibe las imágenes en base64 dentro del mensaje
+            out["images"] = [img.b64() for img in m.images]
+        return out
 
     def _post(self, payload: dict) -> httpx.Response:
         """POST con reintentos ante fallos transitorios (500/502/503 al cargar o descargar el modelo de la GPU)."""

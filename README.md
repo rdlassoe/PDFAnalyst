@@ -2,7 +2,7 @@
 
 Plataforma de código abierto para consultar documentos PDF en lenguaje natural, con respuestas respaldadas por
 **citas verificadas** (documento + página + fragmento exacto). Funciona 100 % en local: PostgreSQL + pgvector,
-embeddings con sentence-transformers (e5 por defecto, o **EmbeddingGemma 2 en local**) y generación con Ollama. Los proveedores externos son opcionales.
+embeddings con sentence-transformers (e5 por defecto, o **EmbeddingGemma 2 en local**) y generación con Ollama; lee también las **imágenes y gráficos de los PDF** con un modelo de visión (Gemini, Groq u Ollama). Los proveedores externos son opcionales.
 
 ## Documentación
 
@@ -14,6 +14,7 @@ embeddings con sentence-transformers (e5 por defecto, o **EmbeddingGemma 2 en lo
 | [docs/LICENSES.md](docs/LICENSES.md) | Licencias de dependencias y de los pesos de los modelos |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Historial de cambios y hallazgos |
 | [docs/plans/PLAN_EMBEDDINGGEMMA2.md](docs/plans/PLAN_EMBEDDINGGEMMA2.md) | EmbeddingGemma 2 **local**: datos del modelo, decisiones, medidas en este equipo y resultado de la evaluación |
+| [docs/plans/PLAN_MULTIMODAL.md](docs/plans/PLAN_MULTIMODAL.md) | Plan para indexar imágenes, audio y vídeo con EmbeddingGemma 2 (imágenes y modelo de visión implementados; audio, vídeo y PDF con figuras pendientes) |
 | [eval/README.md](eval/README.md) · [eval/RESULTS.md](eval/RESULTS.md) | Cómo evaluar con sus documentos y resultados con un libro real |
 
 ## Estructura del proyecto
@@ -26,8 +27,8 @@ PDFAnalyst/
 │   │                        #   citations, llm_settings, embedding_settings, credentials, net_validation, vector_index, storage
 │   ├── app/providers/       #   LLMProvider: ollama, openai_compat (+ ProviderConfig)
 │   ├── app/{models,config,db,worker,cli,evaluate,embedding_server}.py   # embedding_server = servicio local de embeddings
-│   ├── alembic/versions/    #   0001 esquema inicial · 0002 ajustes de LLM · 0003 ajustes de embeddings · 0004 umbral por modelo
-│   └── tests/               #   240 pruebas (pytest)
+│   ├── alembic/versions/    #   0001 esquema inicial · 0002 ajustes de LLM · 0003 ajustes de embeddings · 0004 umbral por modelo · 0005 modelo de visión · 0006 medios (imágenes)
+│   └── tests/               #   359 pruebas (pytest)
 ├── frontend/                # Next.js 15 + React 19 + Tailwind (app/, components/, lib/)
 ├── eval/                    # preguntas de evaluación, e2e.py, RESULTS.md
 ├── scripts/                 # backup / restore (.sh y .ps1)
@@ -172,6 +173,32 @@ y respuestas con el LLM real. En la evaluación (`eval/RESULTS.md`) el modo híb
 con cita correcta y 7/7 abstenciones. Es una muestra pequeña de un solo documento: evalúa con los tuyos. El mecanismo de proveedores por API (externos) sigue probado con un servidor de desarrollo
 (`scripts/dev_embedding_server.py`, docs/OPERATIONS.md §12), **no** con un servicio externo real. Plan y datos del modelo: [docs/plans/PLAN_EMBEDDINGGEMMA2.md](docs/plans/PLAN_EMBEDDINGGEMMA2.md).
 
+## Figuras dentro de los PDF y modelo de visión (Ajustes)
+
+El sistema recibe **PDF**, y un PDF puede contener imágenes: fotos, esquemas, gráficos, diapositivas exportadas como imagen, escaneos. Al procesarlo **detecta esas figuras, las lee y las usa para responder**:
+
+- **Qué se detecta:** imágenes incrustadas (incluida una página entera que es una imagen, como una diapositiva) y **gráficos dibujados con vectores**. Se descartan iconos y viñetas diminutos, líneas, y las imágenes
+  **repetidas en 3 o más páginas** (fondos, logos, marcas de agua). Tope por documento: 60 figuras (las más grandes primero; se avisa de las omitidas).
+- **Qué se hace con cada figura:** (1) se lee el texto que contiene (OCR); (2) un **modelo de visión** escribe qué se ve en ella (descripción automática, guardada y marcada como tal); (3) EmbeddingGemma 2 la convierte en un
+  vector para **encontrarla** con una pregunta en texto. Todo queda ligado a la **página** y la posición de la figura.
+- **Al responder, el sistema MIRA las figuras:** si la evidencia de una pregunta incluye figuras, el modelo de visión recibe la pregunta, los fragmentos y las imágenes (hasta 3) y contesta mirándolas, citando [C#] el texto
+  del PDF y la figura. La cita de una figura abre el PDF en su página y muestra la imagen. Si el modelo de visión falla o no hay consentimiento, se responde con el LLM de texto y las descripciones guardadas.
+- **Modelo de visión (Ajustes → Modelo de visión):** **Google Gemini**, **Groq**, Ollama local u otro compatible con OpenAI. **Desactivado por defecto**. Sin él, las figuras se indexan con su vector y su OCR, pero el sistema no
+  puede decir qué muestran. Hay un interruptor «Responder mirando las figuras de los PDF» (activado por defecto cuando hay un modelo de visión).
+- **Gemini y Groq son servicios externos: las imágenes salen de su equipo** (reducidas y sin metadatos EXIF), y con «responder mirando» también la pregunta y los fragmentos recuperados. Exigen la clave API (se guarda cifrada)
+  y el permiso explícito *«Permitir el envío de las imágenes»*; retirarlo desactiva el modelo al instante. La capa gratuita de Gemini puede usar el contenido para mejorar los productos de Google, según su página de
+  precios: no la use con documentos privados. «Probar con una imagen de prueba» envía una imagen sintética (un círculo rojo) para comprobar que el modelo admite imágenes y que la clave funciona.
+- **Para que un PDF ya subido lea sus figuras:** botón «Volver a procesar» de la lista de documentos (con un servicio externo vuelve a enviar y describir cada figura).
+- **Requisito para encontrar figuras por texto:** perfil «EmbeddingGemma 2 (local)» con la casilla *«admite imágenes, audio y vídeo»* (la plantilla ya la trae). El servicio carga el codificador de imagen solo mientras indexa
+  (≈3,0 GB de RAM) y vuelve a solo texto a los 5 minutos sin uso. Los medios **nunca** se envían a un servicio de embeddings externo.
+- También se pueden subir imágenes sueltas (PNG, JPEG, WebP; el servidor valida la firma): reciben el mismo tratamiento y un visor con «¿Qué ves en esta imagen?».
+
+Verificado de extremo a extremo (con **Groq `qwen/qwen3.8-27b`** y EmbeddingGemma 2 local, un PDF sintético de 2 páginas con un gráfico de barras y una foto): 2 figuras detectadas y descritas en 33 s; la pregunta «¿qué muestra el
+gráfico y qué trimestre tuvo más ventas?» se respondió **mirando la imagen** («Q3, con 420»), con citas al texto del PDF y a la figura; una consulta ajena no devolvió nada. 359 pruebas automáticas. Análisis de PDF reales
+(solo lectura): `Analitica Prescriptiva.pdf` son 12 diapositivas que son una imagen por página; `Parcial 3 - Sol Telco.pdf`, `manual-cassandra.pdf` y `book-attachment` tienen figuras y gráficos vectoriales.
+**No verificado:** la calidad de las descripciones con tus documentos reales, Gemini real (no se probó; Groq sí), y que los umbrales de detección (tamaño, repetición, trazos vectoriales) sean los óptimos para todos los tipos de PDF
+(se pueden ajustar: `PDF_FIGURE_*` y `PDF_VECTOR_*`). Audio y vídeo no se implementan: el sistema solo recibe PDF ([docs/plans/PLAN_MULTIMODAL.md](docs/plans/PLAN_MULTIMODAL.md)).
+
 ## Configuración
 
 Los parámetros (OCR, tamaño de fragmentos, umbrales de recuperación, parámetros del LLM, límite de subida…) se ajustan con variables
@@ -220,7 +247,7 @@ cd ../frontend && npm install && npm run dev
 
 Verificado en esta máquina (Windows 11 + Docker Desktop + RTX 4050), con el stack real y el modelo real:
 
-- 240 pruebas automáticas (esquema/migraciones, extracción, OCR con Tesseract, chunking, embeddings, búsqueda vectorial,
+- 359 pruebas automáticas (esquema/migraciones, extracción, OCR con Tesseract, chunking, embeddings, búsqueda vectorial,
   textual e híbrida, abstención, citas inventadas, inyección en documentos, API, seguridad de rutas, proveedores).
 - Flujo completo en la interfaz: subir PDF → procesar → preguntar a `qwen3:8b` → cita → visor PDF en la página con el
   fragmento resaltado. Copia de seguridad y restauración (BD + embeddings + PDF) probadas.

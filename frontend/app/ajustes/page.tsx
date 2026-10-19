@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowLeft, Cpu, Database, Settings } from "lucide-react";
+import { ArrowLeft, Cpu, Database, ImageIcon, Settings } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import EmbeddingSettingsPanel from "@/components/EmbeddingSettingsPanel";
 import LlmSettingsPanel from "@/components/LlmSettingsPanel";
+import VisionSettingsPanel from "@/components/VisionSettingsPanel";
 import { api, type Health } from "@/lib/api";
 
 export default function AjustesPage() {
@@ -54,6 +55,17 @@ export default function AjustesPage() {
             sabiendo que <strong>un servicio externo recibe el texto íntegro de sus documentos</strong>.
           </p>
           <EmbeddingSettingsPanel />
+        </section>
+
+        <section aria-labelledby="vis-h" className="mt-10 border-t border-line pt-6">
+          <h2 id="vis-h" className="flex items-center gap-2 text-lg font-semibold">
+            <ImageIcon className="h-5 w-5 text-petrol" aria-hidden /> Modelo de visión (qué se ve en las imágenes)
+          </h2>
+          <p className="mb-4 mt-1 text-sm text-ink-soft">
+            Describe lo que contiene cada imagen y permite preguntar sobre ella. EmbeddingGemma 2 solo sirve para <em>encontrar</em> imágenes; para <em>decir qué se ve</em> hace falta un
+            modelo con visión. Puede ser local (Ollama) o un servicio externo como Gemini o Groq; <strong>un servicio externo recibe cada imagen</strong>.
+          </p>
+          <VisionSettingsPanel />
         </section>
       </main>
     </div>

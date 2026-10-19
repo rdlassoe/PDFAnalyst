@@ -64,7 +64,7 @@ def _database():
 
 _TABLES = (
     "message_citations, messages, conversations, collection_documents, collections, "
-    "chunk_embeddings, document_chunks, document_pages, processing_jobs, documents, embedding_models, llm_profiles, embedding_profiles, app_settings"
+    "chunk_embeddings, document_chunks, document_pages, processing_jobs, documents, embedding_models, llm_profiles, embedding_profiles, vision_profiles, app_settings"
 )
 
 
@@ -88,5 +88,7 @@ def embedder():
 @pytest.fixture(autouse=True)
 def _clean_storage():
     yield
+    import shutil
+
     for f in Path(_tmp_storage).glob("*"):
-        f.unlink(missing_ok=True)
+        shutil.rmtree(f, ignore_errors=True) if f.is_dir() else f.unlink(missing_ok=True)
